@@ -1,0 +1,36 @@
+# `my4_fullcolmap_v2 stable_12k_dense @ 11999` 的 Flux refine 配置。
+# 这轮目标不是继续改训练, 而是先在当前 `PSNR-best` 基础上看一次风格化观感。
+# 仍然沿用旧 `my4` refine 的 30..79 视角范围, 方便和旧结果做前后对照。
+
+base_dir: outputs/my4_fullcolmap_v2_stable_12k_dense
+exp_name: flux_shinkai_museum_v2
+
+refine_start_idx: 0
+refine_end_idx: 100
+
+train_start_idx: 0
+train_end_idx: 100
+
+test_split: test
+test_trans: [0, 0, 0]
+test_rots: [0, 0, 0]
+
+# 第一版中英混合 prompt 仍被 CLIP 截到 `126 > 77`。
+# 这里进一步改成英文主锚点, 优先确保结构与核心光效词完整送进编码器。
+# prompt: "high detail. 精修图片,修复生成式图片的画面错误,模糊不清,去雾,增强清晰度,修复图片上不合理,数据错误和逻辑内容错误的部分,消除重影,增强细节,增强纹理,增强边缘."
+prompt: "high detail. Refine images, repair visual errors and blurriness in AI-generated images, perform defogging and enhance clarity. Correct unreasonable elements, data errors and illogical content in the images, remove ghosting, and boost details, textures and edges."
+
+# 继续沿用旧 my4 refine 已跑通的一组参数, 先看观感, 不再同时改太多变量。
+strength: 0.65
+refine_steps: 400
+warp_ratio: 0.3
+
+# 保持几何相关属性一并进入 certainty 估计, 避免风格化时把结构拉散。
+hessian_attr: ["means", "quats", "scales"]
+
+data_type: colmap
+load_step: 11999
+
+# 当前机器已通过 ModelScope 下载好本地快照。
+# 显式写路径, 避免再次回退到 HF gated repo。
+flux_model_path: /home/rais/.cache/modelscope/hub/models/black-forest-labs/FLUX___1-dev

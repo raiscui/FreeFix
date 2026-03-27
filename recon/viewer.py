@@ -11,6 +11,10 @@ import torch.nn.functional as F
 import viser
 from einops import reduce
 
+from recon.runtime_env import bootstrap_pixi_cuda_env
+
+bootstrap_pixi_cuda_env()
+
 from gsplat.rendering import rasterization
 from datasets.colmap import Parser
 # from datasets.seva import SevaParser as Parser

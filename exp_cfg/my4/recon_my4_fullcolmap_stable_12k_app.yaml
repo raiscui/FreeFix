@@ -1,0 +1,78 @@
+# `stable_12k` 的单因素消融配置。
+# 这轮只恢复一个变量:
+# - 把 `app_opt` 从 `false` 改回 `true`
+# 其余窗口、densify 停止点、几何相关设置都保持不变。
+# 这样结果一旦回落, 我们就能更有把握地说:
+# `app_opt` 至少是上一轮收益的重要因素之一。
+
+disable_viewer: true
+ckpt: null
+data_type: colmap
+
+data_dir: data/my4_fullcolmap
+data_factor: 1
+result_dir: outputs/my4_fullcolmap_stable_12k_app
+test_every: 1
+patch_size: null
+global_scale: 1.0
+partition: partition.json
+
+port: 8080
+batch_size: 1
+steps_scaler: 1.0
+
+# 保持和上一轮 `stable_12k` 完全一致的训练窗口。
+max_steps: 12000
+eval_steps: [3000, 6000, 9000, 12000]
+save_steps: [3000, 6000, 9000, 12000]
+
+init_type: sfm
+init_num_pts: 100000
+init_extent: 3.0
+sh_degree: 3
+sh_degree_interval: 1000
+init_opa: 0.1
+init_scale: 1.0
+ssim_lambda: 0.2
+
+near_plane: 0.01
+far_plane: 10000000000.0
+
+strategy: default
+prune_opa: 0.005
+grow_grad2d: 0.0002
+grow_scale3d: 0.01
+prune_scale3d: 0.1
+refine_start_iter: 500
+
+# 继续保持 9k 停止 densify, 避免把变量混在一起。
+refine_stop_iter: 9000
+reset_every: 3000
+refine_every: 200
+
+packed: false
+sparse_grad: false
+absgrad: false
+antialiased: false
+revised_opacity: false
+
+random_bkgd: false
+
+# 这里只恢复 `app_opt`。
+pose_opt: true
+pose_opt_lr: 0.00001
+pose_opt_reg: 0.000001
+pose_noise: 0.0
+
+app_opt: true
+app_embed_dim: 16
+app_opt_lr: 0.001
+app_opt_reg: 0.000001
+
+depth_loss: true
+depth_lambda: 0.01
+
+tb_every: 100
+tb_save_image: false
+
+c_exp_index: [0.001, 0.01, 0.1]

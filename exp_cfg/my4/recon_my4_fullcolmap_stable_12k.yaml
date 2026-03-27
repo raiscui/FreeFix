@@ -1,0 +1,82 @@
+# `data/my4_fullcolmap` 的稳态短训对照配置。
+# 这轮不是继续把旋钮越拧越满, 而是做一个更容易证伪的实验:
+# - 保留 `pose_opt` 和 `depth_loss`, 继续给几何留修正空间
+# - 先关闭 `app_opt`, 观察重影和结构发虚是否会缓解
+# - 把训练窗口压到 `12000` 步, 更贴近当前已知更优的 `9999` 附近
+
+disable_viewer: true
+ckpt: null
+data_type: colmap
+
+data_dir: data/my4_fullcolmap
+data_factor: 1
+result_dir: outputs/my4_fullcolmap_stable_12k
+test_every: 1
+patch_size: null
+global_scale: 1.0
+partition: partition.json
+
+port: 8080
+batch_size: 1
+steps_scaler: 1.0
+
+# 先围绕当前已知较优区域做短训。
+# 这样更快拿到证据, 也避免再次把时间花在后半程退化区间。
+max_steps: 12000
+eval_steps: [3000, 6000, 9000, 12000]
+save_steps: [3000, 6000, 9000, 12000]
+
+init_type: sfm
+init_num_pts: 100000
+init_extent: 3.0
+sh_degree: 3
+sh_degree_interval: 1000
+init_opa: 0.1
+init_scale: 1.0
+ssim_lambda: 0.2
+
+near_plane: 0.01
+far_plane: 10000000000.0
+
+strategy: default
+prune_opa: 0.005
+grow_grad2d: 0.0002
+grow_scale3d: 0.01
+prune_scale3d: 0.1
+refine_start_iter: 500
+
+# 把 densify / prune 窗口提前收住。
+# 让结构先在 9k 左右稳定下来, 留出最后 3k 做收敛观察。
+refine_stop_iter: 9000
+reset_every: 3000
+refine_every: 200
+
+packed: false
+sparse_grad: false
+absgrad: false
+antialiased: false
+revised_opacity: false
+
+random_bkgd: false
+
+# 这轮只改最关键的一项:
+# - `pose_opt` 继续开着, 避免把位姿误差重新带回来
+# - `app_opt` 先关掉, 看外观补偿是否是重影来源之一
+# - `depth_loss` 保留, 继续给几何一个稀疏约束
+pose_opt: true
+pose_opt_lr: 0.00001
+pose_opt_reg: 0.000001
+pose_noise: 0.0
+
+app_opt: false
+app_embed_dim: 16
+app_opt_lr: 0.001
+app_opt_reg: 0.000001
+
+depth_loss: true
+depth_lambda: 0.01
+
+tb_every: 100
+tb_save_image: false
+
+c_exp_index: [0.001, 0.01, 0.1]

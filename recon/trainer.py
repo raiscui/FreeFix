@@ -8,6 +8,7 @@ import shutil
 
 import imageio
 from recon import nerfview
+from recon.runtime_env import bootstrap_pixi_cuda_env
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -23,6 +24,8 @@ from recon.utils import AppearanceOptModule, CameraOptModule, knn, rgb_to_sh, se
 from einops import reduce, repeat
 import imageio
 from imageio.v2 import imwrite
+
+bootstrap_pixi_cuda_env()
 
 from gsplat.rendering import rasterization
 from gsplat.strategy import DefaultStrategy, MCMCStrategy
@@ -373,7 +376,7 @@ class Runner:
             load_depths=cfg.depth_loss,
             partition_file=cfg.partition,
         )
-        self.valset = Dataset(self.parser, split="train", partition_file=cfg.partition)
+        self.valset = Dataset(self.parser, split="test", partition_file=cfg.partition)
         self.scene_scale = self.parser.scene_scale * 1.1 * cfg.global_scale
         print("Trainset Size: ", len(self.trainset))
         print("Test Size: ", len(self.valset))
@@ -495,17 +498,20 @@ class Runner:
         opacities = torch.sigmoid(self.splats["opacities"])  # [N,]
 
         image_ids = kwargs.pop("image_ids", None)
-        if self.cfg.app_opt:
-            colors = self.app_module(
-                features=self.splats["features"],
-                embed_ids=image_ids,
-                dirs=means[None, :, :] - camtoworlds[:, None, :3, 3],
-                sh_degree=kwargs.pop("sh_degree", self.cfg.sh_degree),
-            )
-            colors = colors + self.splats["colors"]
-            colors = torch.sigmoid(colors)
+        if override_color is None:
+            if self.cfg.app_opt:
+                colors = self.app_module(
+                    features=self.splats["features"],
+                    embed_ids=image_ids,
+                    dirs=means[None, :, :] - camtoworlds[:, None, :3, 3],
+                    sh_degree=kwargs.pop("sh_degree", self.cfg.sh_degree),
+                )
+                colors = colors + self.splats["colors"]
+                colors = torch.sigmoid(colors)
+            else:
+                colors = torch.cat([self.splats["sh0"], self.splats["shN"]], 1)  # [N, K, 3]
         else:
-            colors = torch.cat([self.splats["sh0"], self.splats["shN"]], 1)  # [N, K, 3]
+            colors = override_color
 
         rasterize_mode = "antialiased" if self.cfg.antialiased else "classic"
         render_colors, render_alphas, info = rasterization(
@@ -513,7 +519,7 @@ class Runner:
             quats=quats,
             scales=scales,
             opacities=opacities,
-            colors=colors if override_color is None else override_color,
+            colors=colors,
             viewmats=torch.linalg.inv(camtoworlds),  # [C, 4, 4]
             Ks=Ks,  # [C, 3, 3]
             width=width,
@@ -533,6 +539,7 @@ class Runner:
             width: int, 
             height: int
         ):
+        cfg = self.cfg
         rgbs, alphas, _ = self.rasterize_splats(
             camtoworlds=camtoworlds,
             Ks=Ks,
@@ -551,12 +558,9 @@ class Runner:
         rgbs[..., :3].backward(gradient=torch.ones_like(rgbs[..., :3]))
         H_per_gaussian = [self.splats[k].grad.detach() ** 2 for k in ["means"]]
         H_per_gaussian = torch.cat(H_per_gaussian, dim=-1)
-        self.splats['means'].grad = None
-        self.splats['quats'].grad = None
-        self.splats['scales'].grad = None
-        self.splats['opacities'].grad = None
-        self.splats['sh0'].grad = None
-        self.splats['shN'].grad = None
+        for grad_key in ("means", "quats", "scales", "opacities", "sh0", "shN", "features", "colors"):
+            if grad_key in self.splats:
+                self.splats[grad_key].grad = None
         multi_certainties = []
         for exp_index in cfg.c_exp_index:
             inv_H_gaussian = torch.exp(-exp_index * H_per_gaussian)

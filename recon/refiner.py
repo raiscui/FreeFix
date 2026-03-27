@@ -17,6 +17,9 @@ import numpy as np
 import roma
 
 from recon.trainer import Config, soft_sigmoid
+from recon.runtime_env import bootstrap_pixi_cuda_env
+
+bootstrap_pixi_cuda_env()
 
 from gsplat.rendering import rasterization
 from gsplat.strategy import DefaultStrategy
@@ -28,6 +31,7 @@ class Refiner:
         self, 
         cfg: Config, 
         load_step=29999, 
+        load_ckpt_path: Optional[str] = None,
         test_split="test",
         test_trans=[0, 0, 0],
         test_rots=[0, 0, 0],
@@ -80,8 +84,16 @@ class Refiner:
         # self.refine_dataset = Refine_Dataset(os.path.join(cfg.result_dir, "to_refine"))
 
         # Load the pre-optimized gaussian splats
-        ckpt_path = os.path.join(cfg.result_dir, "ckpts", f"ckpt_{load_step}.pt")
-        self.splats = torch.nn.ParameterDict(torch.load(ckpt_path, map_location=self.device)["splats"])
+        ckpt_path = load_ckpt_path
+        if ckpt_path is None:
+            ckpt_path = os.path.join(cfg.result_dir, "ckpts", f"ckpt_{load_step}.pt")
+        try:
+            payload = torch.load(ckpt_path, map_location=self.device, weights_only=False)
+        except TypeError:
+            payload = torch.load(ckpt_path, map_location=self.device)
+        if "splats" not in payload:
+            raise KeyError(f"checkpoint 缺少 splats 字段: {ckpt_path}")
+        self.splats = torch.nn.ParameterDict(payload["splats"])
 
         affines = {}
         for i in range(test_len):
@@ -195,17 +207,20 @@ class Refiner:
         opacities = torch.sigmoid(self.splats["opacities"])  # [N,]
 
         image_ids = kwargs.pop("image_ids", None)
-        if self.cfg.app_opt:
-            colors = self.app_module(
-                features=self.splats["features"],
-                embed_ids=image_ids,
-                dirs=means[None, :, :] - camtoworlds[:, None, :3, 3],
-                sh_degree=kwargs.pop("sh_degree", self.cfg.sh_degree),
-            )
-            colors = colors + self.splats["colors"]
-            colors = torch.sigmoid(colors)
+        if override_color is None:
+            if self.cfg.app_opt:
+                colors = self.app_module(
+                    features=self.splats["features"],
+                    embed_ids=image_ids,
+                    dirs=means[None, :, :] - camtoworlds[:, None, :3, 3],
+                    sh_degree=kwargs.pop("sh_degree", self.cfg.sh_degree),
+                )
+                colors = colors + self.splats["colors"]
+                colors = torch.sigmoid(colors)
+            else:
+                colors = torch.cat([self.splats["sh0"], self.splats["shN"]], 1)  # [N, K, 3]
         else:
-            colors = torch.cat([self.splats["sh0"], self.splats["shN"]], 1)  # [N, K, 3]
+            colors = override_color
 
         rasterize_mode = "antialiased" if self.cfg.antialiased else "classic"
         render_colors, render_alphas, info = rasterization(
@@ -213,7 +228,7 @@ class Refiner:
             quats=quats,
             scales=scales,
             opacities=opacities,
-            colors=colors if override_color is None else override_color,
+            colors=colors,
             viewmats=torch.linalg.inv(camtoworlds),  # [C, 4, 4]
             Ks=Ks,  # [C, 3, 3]
             width=width,
@@ -254,12 +269,9 @@ class Refiner:
         H_per_gaussian = [self.splats[k].grad.detach() ** 2 for k in self.hessian_attr]
         # H_per_gaussian = [self.splats[k].grad.detach() ** 2 for k in ["means", "quats", "scales"]]
         H_per_gaussian = torch.cat(H_per_gaussian, dim=-1)
-        self.splats['means'].grad = None
-        self.splats['quats'].grad = None
-        self.splats['scales'].grad = None
-        self.splats['opacities'].grad = None
-        self.splats['sh0'].grad = None
-        self.splats['shN'].grad = None
+        for grad_key in ("means", "quats", "scales", "opacities", "sh0", "shN", "features", "colors"):
+            if grad_key in self.splats:
+                self.splats[grad_key].grad = None
         multi_certainties = []
         for exp_index in self.c_exp_index:
             inv_H_gaussian = torch.exp(-exp_index * H_per_gaussian)

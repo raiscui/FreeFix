@@ -1,0 +1,81 @@
+# `data/my4_fullcolmap` 的画质优先训练配置。
+# 这份配置不是单纯复现旧结果, 而是基于前面的质量诊断做增强:
+# - 数据侧: 使用重新 full COLMAP 后的更干净场景
+# - 训练侧: 延长训练和 densify 窗口, 并打开 pose/app/depth 三条增强路径
+
+disable_viewer: true
+ckpt: null
+data_type: colmap
+
+data_dir: data/my4_fullcolmap
+data_factor: 1
+result_dir: outputs/my4_fullcolmap_quality
+test_every: 1
+patch_size: null
+global_scale: 1.0
+partition: partition.json
+
+port: 8080
+batch_size: 1
+steps_scaler: 1.0
+
+# 这轮不再停在 30000 步。
+# 对当前场景, 更长的优化窗口更有机会把几何和外观细节补起来。
+max_steps: 50000
+eval_steps: [1000, 10000, 30000, 50000]
+save_steps: [1000, 10000, 30000, 50000]
+
+init_type: sfm
+init_num_pts: 100000
+init_extent: 3.0
+sh_degree: 3
+sh_degree_interval: 1000
+init_opa: 0.1
+init_scale: 1.0
+ssim_lambda: 0.2
+
+near_plane: 0.01
+far_plane: 10000000000.0
+
+strategy: default
+prune_opa: 0.005
+grow_grad2d: 0.0002
+grow_scale3d: 0.01
+prune_scale3d: 0.1
+refine_start_iter: 500
+
+# 把 densify / prune 窗口从 15000 拉长到 30000。
+# 这更符合“当前质量偏欠拟合”的诊断口径。
+refine_stop_iter: 30000
+reset_every: 3000
+refine_every: 200
+
+packed: false
+sparse_grad: false
+absgrad: false
+antialiased: false
+revised_opacity: false
+
+random_bkgd: false
+
+# 这三项是这轮增强配置的核心。
+# - pose_opt: 修一点相机位姿误差
+# - app_opt: 吃掉曝光/颜色漂移
+# - depth_loss: 用 COLMAP 稀疏点补几何约束
+pose_opt: true
+pose_opt_lr: 0.00001
+pose_opt_reg: 0.000001
+pose_noise: 0.0
+
+app_opt: true
+app_embed_dim: 16
+app_opt_lr: 0.001
+app_opt_reg: 0.000001
+
+depth_loss: true
+depth_lambda: 0.01
+
+tb_every: 100
+tb_save_image: false
+
+c_exp_index: [0.001, 0.01, 0.1]

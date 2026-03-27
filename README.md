@@ -42,10 +42,48 @@ Then, install the environment by running:
 pixi install
 ```
 
+If you plan to build local CUDA extensions from this shell, run:
+
+```bash
+direnv allow
+```
+
+The reconstruction entrypoints in `recon/` also bootstrap the same pixi CUDA paths automatically, so direct commands such as `.pixi/envs/default/bin/python -m recon.trainer ...` keep working even when the shell has not loaded `direnv`.
+
 
 # Data Preparation
 
 Download the sample data from [here](https://huggingface.co/datasets/hyzhou404/FreeFix) and save it to the `data/` directory.
+
+If you already have an external COLMAP-style scene directory and do not want to write back into that source directory, you can stage it into this repo with:
+
+```bash
+python -m recon.prepare_colmap_scene \
+  --source-dir /path/to/external_scene \
+  --dest-dir data/<scene_name>
+```
+
+The importer will:
+
+- copy the minimum image subset needed by the COLMAP database into this repo
+- copy metadata and build `meta/partition_source_names.json`
+- copy an existing sparse model when available
+- write `partition.json` only when it can verify the registered image list against the sparse model
+
+If the source directory does not contain `sparse/` or `sparse/0`, you can rebuild it in the destination directory with:
+
+```bash
+python -m recon.prepare_colmap_scene \
+  --source-dir /path/to/external_scene \
+  --dest-dir data/<scene_name> \
+  --rebuild-sparse \
+  --colmap-binary /path/to/colmap \
+  --force
+```
+
+If `colmap` is not in your `PATH`, the importer also tries common local locations automatically, including `/home/rais/.local/opt/colmap-env/bin/colmap`.
+
+After the importer reports `"sparse_ready": true`, the scene can be used with the normal reconstruction command below.
 
 # Reconstruction & Refine
 
@@ -58,6 +96,17 @@ python -m recon.trainer --data_dir <data_directory> --result_dir <result_directo
 
 # Example
 python -m recon.trainer --data_dir data/mipnerf/bicycle_v2 --result_dir outputs/mipnerf/bicycle_v2 --data_factor 4 --data_type colmap
+```
+
+If you want a quick smoke test before a long run:
+
+```bash
+python -m recon.trainer \
+  --data_dir <data_directory> \
+  --result_dir <result_directory>_smoke \
+  --data_type colmap \
+  --max_steps 1 \
+  --disable_viewer
 ```
 <details>
   <summary>optional arguments</summary>

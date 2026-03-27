@@ -1,23 +1,52 @@
 import argparse
 import os
 import json
-import torch
-import numpy as np
-import imageio
-from ours.utils import align_depth, splat_pixels
-from ours.pipelines.sdxl_pipeline import StableDiffusionXLImg2ImgPipeline
-from ours.schedulers.euler_discrete_scheduler import EulerDiscreteScheduler
-from torchvision.utils import save_image
-import re
-import fire
-from recon.refiner import Refiner, Config
-from omegaconf import OmegaConf
-import argparse
-from recon.trainer import save_depth_map_visualization
+from pathlib import Path
+
+
+def resolve_optional_checkpoint_path(cfg) -> str | None:
+    raw_path = getattr(cfg, "load_ckpt_path", None)
+    if raw_path is None:
+        return None
+
+    candidate = Path(raw_path).expanduser()
+    if candidate.is_absolute():
+        return str(candidate)
+
+    if candidate.exists():
+        return str(candidate.resolve())
+
+    return str((Path(cfg.base_dir) / candidate).resolve())
+
+
+def apply_runtime_path_overrides(cfg, config) -> str | None:
+    colmap_path = getattr(cfg, "colmap_path", None)
+    if colmap_path is not None:
+        scene_dir = Path(colmap_path).expanduser().resolve()
+        config.data_dir = str(scene_dir)
+        partition_path = scene_dir / "partition.json"
+        if partition_path.exists():
+            config.partition = str(partition_path)
+
+    return resolve_optional_checkpoint_path(cfg)
+
 
 def refine(cfg):
+    # 只在真正执行 refine 时再加载这些重依赖。
+    # 这样命令行 `--help` 可以先快速返回, 不被模型/渲染相关 import 拖慢。
+    import imageio
+    import numpy as np
+    import torch
+    from torchvision.utils import save_image
+
+    from ours.pipelines.sdxl_pipeline import StableDiffusionXLImg2ImgPipeline
+    from ours.schedulers.euler_discrete_scheduler import EulerDiscreteScheduler
+    from recon.refiner import Refiner, Config
+    from recon.trainer import save_depth_map_visualization
+
     with open(os.path.join(cfg.base_dir, cfg.gs_cfg_file), "r") as f:
         config = Config(**json.load(f))
+    load_ckpt_path = apply_runtime_path_overrides(cfg, config)
     refiner = Refiner(
         config, 
         load_step=cfg.load_step,
@@ -28,6 +57,7 @@ def refine(cfg):
         hessian_attr=cfg.hessian_attr,
         test_len = cfg.refine_end_idx - cfg.refine_start_idx,
         data_type=cfg.data_type,
+        load_ckpt_path=load_ckpt_path,
     )
 
     pipe = StableDiffusionXLImg2ImgPipeline.from_pretrained(
@@ -134,12 +164,29 @@ def refine(cfg):
     refiner.save(name=f"ckpt_{cfg.exp_name}")   
 
 
-if __name__ == "__main__":
+def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument('--exp_cfg', type=str, required=True, help='exp cfg path')
     parser.add_argument('--base_cfg', type=str, default="exp_cfg/base.yaml", help='base cfg path')
+    parser.add_argument('--colmap-path', type=str, default=None, help='运行时覆盖数据集路径, 直接指向 COLMAP 场景目录')
+    parser.add_argument('--ckpt-path', type=str, default=None, help='运行时覆盖初始高斯 checkpoint 路径')
+    return parser
+
+
+def main() -> None:
+    parser = build_arg_parser()
     args = parser.parse_args()
+    from omegaconf import OmegaConf
+
     base_cfg = OmegaConf.load(args.base_cfg)
     exp_cfg = OmegaConf.load(args.exp_cfg)
     cfg = OmegaConf.merge(base_cfg, exp_cfg)
+    if args.colmap_path is not None:
+        cfg.colmap_path = args.colmap_path
+    if args.ckpt_path is not None:
+        cfg.load_ckpt_path = args.ckpt_path
     refine(cfg)
+
+
+if __name__ == "__main__":
+    main()

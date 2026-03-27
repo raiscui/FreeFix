@@ -6,7 +6,6 @@ import cv2
 import imageio.v2 as imageio
 import numpy as np
 import torch
-from pycolmap import SceneManager
 
 from .normalize import (
     align_principle_axes,
@@ -14,6 +13,7 @@ from .normalize import (
     transform_cameras,
     transform_points,
 )
+from .colmap_io import SimpleSceneManager
 
 
 def _get_rel_paths(path_dir: str) -> List[str]:
@@ -47,7 +47,7 @@ class Parser:
             colmap_dir
         ), f"COLMAP directory {colmap_dir} does not exist."
 
-        manager = SceneManager(colmap_dir)
+        manager = SimpleSceneManager(colmap_dir)
         manager.load_cameras()
         manager.load_images()
         manager.load_points3D()
@@ -251,8 +251,9 @@ class Dataset:
                 self.indices = self.partition["test"]
         else:
             if split == "train":
-                # self.indices = indices[indices % self.parser.test_every != 0]
-                self.indices = indices
+                # 没有显式 partition 时, 回退到按 test_every 做互斥划分。
+                # 这样 train 不会再偷偷包含 test 样本, 避免评测数据泄漏。
+                self.indices = indices[indices % self.parser.test_every != 0]
             else:
                 self.indices = indices[indices % self.parser.test_every == 0]
 
@@ -291,6 +292,13 @@ class Dataset:
             "camtoworld": torch.from_numpy(camtoworlds).float(),
             "image": torch.from_numpy(image).float(),
             "image_id": item,  # the index of the image in the dataset
+            # 让 COLMAP 数据集和 hugsim / seva 的样本契约保持一致。
+            # 这样像 render_traj 这类上层逻辑就不需要为不同数据集分叉处理。
+            "image_path": self.parser.image_paths[index],
+            "image_name": self.parser.image_names[index],
+            # 这里返回当前实际图像尺寸, 而不是 parser 里的原始尺寸。
+            # 如果前面做了去畸变或裁剪, 渲染分辨率也必须和当前图像一致。
+            "image_size": (image.shape[1], image.shape[0]),
         }
 
         if self.load_depths:
