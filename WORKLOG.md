@@ -127,6 +127,49 @@
 - 最小探针环境里缺少 `numpy` 这类运行依赖, 很容易制造“像是扩展坏了”的假象, 需要顺着真实导入链继续验证
 - 下一步如果要改主项目, 核心就不再是怀疑 `pytorch3d` 本身, 而是评估 `xformers/mmcv/unidepth` 能不能一起迁到新 Torch 线
 
+## [2026-03-27 21:44:58] [Session ID: 019d2f6a-705e-7ca1-97af-342c1bf4e24d] 任务名称: 接入 `raiscui/FreeFix` 远端并定位推送认证阻塞
+
+### 任务内容
+- 核对当前仓库是否已有待推送提交
+- 将目标仓库 `https://github.com/raiscui/FreeFix` 作为独立远端接入
+- 诊断当前会话为什么无法完成 `git push`
+
+### 完成过程
+- 先确认当前工作区没有新的代码改动要提交, 本地 `main` 只是相对 `origin/main` 超前 1 个提交
+- 验证目标仓库存在, 远端 `HEAD` 为 `e0ec6a858a0ba644325d8ca4bbb2f7f8b74caad2`
+- 新增本地远端 `raiscui -> https://github.com/raiscui/FreeFix.git`
+- 尝试执行 `git push raiscui main:main`, 观察到 HTTPS 认证失败
+- 继续验证替代路径, 发现:
+  - 本机未安装 `gh`
+  - `~/.ssh` 下没有可见私钥
+  - `ssh -T git@github.com` 返回 `Permission denied (publickey)`
+
+### 总结感悟
+- 这次阻塞不是仓库地址错误, 而是当前会话没有可用的 GitHub 写权限凭据
+- 把目标仓库作为独立远端接入, 比直接改 `origin` 更稳, 后续补齐认证后可直接重试推送
+
+## [2026-03-27 22:13:32] [Session ID: 019d2f6a-705e-7ca1-97af-342c1bf4e24d] 任务名称: 使用 `GITHUB_TOKEN` 完成 `raiscui/FreeFix` 推送
+
+### 任务内容
+- 继续上次卡住的第3阶段, 用新加入的 `GITHUB_TOKEN` 完成真实推送
+- 验证 token 是“本身无效”还是“Git 凭据喂法错误”
+- 回读目标仓库 `main` 分支哈希, 确认推送已生效
+
+### 完成过程
+- 先确认当前普通 shell 里仍看不到 `GITHUB_TOKEN`
+- 再验证 `direnv exec .` 子会话中 token 可见
+- 调 GitHub API `/user`, 确认 token 有效且对应账号就是 `raiscui`
+- 尝试过直接 HTTP 认证头方案, 但这条链路没有稳定喂进 Git 的用户名/密码交互
+- 最后改用临时 `askpass` 脚本:
+  - 用户名固定返回 `raiscui`
+  - 密码返回当前 `GITHUB_TOKEN`
+- 成功执行 `git push raiscui main:main`
+- 用 `git ls-remote ... refs/heads/main` 回读确认远端已到 `3fb6b57`
+
+### 总结感悟
+- 这次真正有用的不是“有没有 token”, 而是“Git 在当前会话里通过哪条认证入口拿到 token”
+- `direnv` 能解决环境注入问题, 临时 `askpass` 能解决 Git 交互取凭据的问题, 两者配合最稳
+
 ## [2026-03-26 10:39:48] [Session ID: 019d28a9-9701-7013-a2b7-6683f4e4f3fe] 任务名称: 落地项目级 Blackwell 迁移第一轮补丁
 
 ### 任务内容

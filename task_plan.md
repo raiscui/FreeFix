@@ -142,6 +142,42 @@
 
 **目前已完成** - 项目配置已修正为 11.8 CUDA 工具链优先, 且原始 `12.x vs 11.8` mismatch 链已通过针对性验证打通。
 
+## [2026-03-27 21:42:29] [Session ID: 019d2f6a-705e-7ca1-97af-342c1bf4e24d] [记录类型]: 推送当前 main 到用户指定仓库 `raiscui/FreeFix`
+
+## 目标
+
+把当前本地 `main` 分支上尚未推送的提交, 安全推送到用户指定的 GitHub 仓库 `https://github.com/raiscui/FreeFix`。
+
+## 阶段
+
+- [x] 阶段1: 读取仓库状态与历史上下文
+- [ ] 阶段2: 核对目标远端与推送策略
+- [ ] 阶段3: 执行推送并验证结果
+- [ ] 阶段4: 记录交付与后续建议
+
+## 关键问题
+
+1. 当前工作区是否干净: 是, `git status --short --branch` 只显示 `main...origin/main [ahead 1]`。
+2. 当前 `origin` 是否已经指向用户给出的仓库: 否, 当前 `origin` 指向 `https://github.com/hyzhou404/FreeFix.git`。
+3. 当前仓库是否存在 submodule 需要一并处理: 否, `git submodule status` 为空。
+4. 当前最直接待处理对象是什么: 不是“生成新提交”, 而是“把已存在但未推送的本地提交推到正确远端”。
+
+## 做出的决定
+
+- 决定1: 先不改动代码内容, 因为当前工作区干净, 没有新的文件改动需要提交。
+- 决定2: 优先采用更稳妥的推送路径:
+  - 方案A(最佳方案): 保留现有 `origin`, 新增一个指向 `raiscui/FreeFix` 的远端并推送, 降低误改现有协作配置的风险。
+  - 方案B(先能用方案): 直接把 `origin` 改到 `raiscui/FreeFix`, 然后推送。
+- 决定3: 先验证本机对目标仓库是否具备 push 权限, 再决定是否需要调整远端命名。
+
+## 遇到错误
+
+- 暂无新错误, 当前仅确认到“目标仓库与现有 `origin` 不一致”这一事实。
+
+## 状态
+
+**目前在阶段2** - 正在核对目标远端接入方式与 push 权限, 准备执行推送。
+
 ## [2026-03-26 07:40:06] [Session ID: 019d28a9-9701-7013-a2b7-6683f4e4f3fe] [记录类型]: 继续安装, 暴露出 unidepth 与 numpy 版本约束冲突
 
 ## 目标
@@ -675,3 +711,101 @@
 ## 状态
 
 **支线已完成** - 已完成 `/home/rais/FastGS` 与当前仓库 COLMAP 流程的静态对比, 结论已整理到支线上下文文件。
+
+## [2026-03-27 21:44:03] [Session ID: 019d2f6a-705e-7ca1-97af-342c1bf4e24d] [记录类型]: 推送阶段受阻, 已确认是认证链路缺失
+
+## 阶段
+
+- [x] 阶段1: 读取仓库状态与历史上下文
+- [x] 阶段2: 核对目标远端与推送策略
+- [ ] 阶段3: 执行推送并验证结果
+- [ ] 阶段4: 记录交付与后续建议
+
+## 关键问题
+
+1. 目标仓库是否存在: 是, `git ls-remote https://github.com/raiscui/FreeFix.git HEAD` 成功返回 `e0ec6a858a0ba644325d8ca4bbb2f7f8b74caad2`。
+2. 当前是否已经把目标远端接入本地: 是, 已新增 `raiscui -> https://github.com/raiscui/FreeFix.git`。
+3. 推送失败是仓库地址问题还是认证问题: 当前证据指向认证问题。
+4. SSH 是否可作为替代路径: 当前不可用, `ssh -o BatchMode=yes -T git@github.com` 返回 `Permission denied (publickey)`。
+
+## 做出的决定
+
+- 决定4: 不去篡改现有 `origin`, 保留新增的 `raiscui` 远端作为目标仓库入口。
+- 决定5: 在没有可用 GitHub 写权限凭据前, 不反复盲试 `git push`, 避免制造无意义失败。
+- 决定6: 将当前阻塞明确记录为“认证未就绪”, 等待补齐凭据后继续执行阶段3。
+
+## 遇到错误
+
+- 错误1: `git push raiscui main:main` 返回 `remote: No anonymous write access.` 与 `fatal: Authentication failed for 'https://github.com/raiscui/FreeFix.git/'`
+- 错误2: `gh auth status` 不可用, 因为本机未安装 `gh`
+- 错误3: `ssh -o BatchMode=yes -T git@github.com` 返回 `Permission denied (publickey)`
+
+## 状态
+
+**目前卡在阶段3** - 仓库地址与目标分支都已确认, 但当前会话没有可用的 GitHub 认证凭据, 需要补齐认证后再继续推送。
+
+## [2026-03-27 22:12:11] [Session ID: 019d2f6a-705e-7ca1-97af-342c1bf4e24d] [记录类型]: 发现 `GITHUB_TOKEN` 可通过 `direnv` 注入当前仓库会话
+
+## 关键问题
+
+1. 当前普通非交互 shell 是否能直接看到 `GITHUB_TOKEN`: 不能, 直接检查返回 `GITHUB_TOKEN_MISSING`。
+2. 当前仓库的 `direnv` 环境是否能看到 `GITHUB_TOKEN`: 能, `direnv exec . bash -lc '...'` 返回 `GITHUB_TOKEN_PRESENT_IN_DIRENV`。
+3. `.envrc` 是否直接包含 `GITHUB_TOKEN`: 否, 当前仓库 `.envrc` 本身未命中 `GITHUB_TOKEN`, 说明 token 来自更上层的 `direnv` 链路。
+
+## 做出的决定
+
+- 决定7: 不再要求当前顶层 shell 继承 `GITHUB_TOKEN`, 直接通过 `direnv exec .` 执行带认证的 `git push`。
+- 决定8: 推送时使用 HTTP 额外认证头, 避免把 token 明文写进远端 URL 或终端输出。
+
+## 状态
+
+**目前仍在阶段3** - 认证凭据已经找到可用注入路径, 下一步直接执行真实推送并回读远端分支哈希。
+
+## [2026-03-27 22:13:32] [Session ID: 019d2f6a-705e-7ca1-97af-342c1bf4e24d] [记录类型]: 使用 `direnv + 临时 askpass` 完成推送
+
+## 阶段
+
+- [x] 阶段1: 读取仓库状态与历史上下文
+- [x] 阶段2: 核对目标远端与推送策略
+- [x] 阶段3: 执行推送并验证结果
+- [x] 阶段4: 记录交付与后续建议
+
+## 关键问题
+
+1. `GITHUB_TOKEN` 是否有效: 是, GitHub API `/user` 返回 `HTTP 200`, 登录账号为 `raiscui`。
+2. 为什么前一轮带 token 仍失败: 因为 Git 的 HTTPS 凭据喂法不对, 不是 token 无效。
+3. 最终哪条链路成功: `direnv exec .` 注入 token, 再用临时 `askpass` 脚本为 Git 提供用户名和密码。
+4. 远端是否已确认更新: 是, `git ls-remote https://github.com/raiscui/FreeFix.git refs/heads/main` 返回 `3fb6b57b6007c36c5b0ea39e9832094727e2db52`。
+
+## 做出的决定
+
+- 决定9: 保留 `raiscui` 远端, 不覆盖现有 `origin`。
+- 决定10: 采用临时 `askpass` 脚本而不是把 token 写进 URL, 降低敏感信息泄露风险。
+- 决定11: 本次任务以“现有本地提交已成功推送到目标仓库”为交付口径, 不额外制造新的 Git 提交。
+
+## 状态
+
+**目前已完成** - `raiscui/FreeFix` 的 `main` 已更新到本地 `HEAD` 提交 `3fb6b57`。
+
+## [2026-03-27 22:14:26] [Session ID: 20260327T221426Z-main] [记录类型]: 启用支线 __colmap_my5 处理 my5 训练与 refine 配置
+
+## 关键问题
+
+1. 为什么这次要单开支线:
+   - 当前任务和默认 `task_plan.md` 里的 Git / 环境修复主线不同。
+   - 这次是独立的 `my5` 训练配置与运行任务, 适合放进单独的 `__colmap_my5` 上下文集。
+2. 这次支线的主题是什么:
+   - 使用 `/home/rais/FastGS/data/my5_colmap_fastgs` 这份外部 COLMAP 数据。
+   - 参考 `my4` 的稳态训练与 Flux refine 配置, 新建一套 `my5` 可直接运行的配置。
+3. 支线文件入口放在哪里:
+   - `task_plan__colmap_my5.md`
+   - `notes__colmap_my5.md`
+
+## 做出的决定
+
+- 决定12: 本轮使用 `__colmap_my5` 作为统一后缀, 避免和默认主线日志混写。
+- 决定13: 索引、研究、收尾记录都优先写入 `__colmap_my5` 这套文件。
+
+## 状态
+
+**支线已启用** - `__colmap_my5` 将用于承接本轮 my5 训练配置、索引验证和训练执行记录。

@@ -107,6 +107,35 @@
 ### 后续讨论入口
 - 下次再评估 `xformers`、`mmcv`、`fisher_rasterize` 一类原生扩展时, 先回看这条结论
 
+## [2026-03-27 22:13:32] [Session ID: 019d2f6a-705e-7ca1-97af-342c1bf4e24d] 主题: `direnv` 里的 GitHub token 不等于普通 shell 里的 Git 凭据已经自动可用
+
+### 发现来源
+- 在把本地 `main` 推送到 `https://github.com/raiscui/FreeFix` 的过程中发现
+
+### 核心问题
+- `GITHUB_TOKEN` 在 `direnv exec .` 子会话里是可见的
+- 但普通 `exec_command` shell 看不到它
+- 即使 token 有效, Git 在当前环境下仍可能因为 `askpass` 链路不对而继续认证失败
+
+### 为什么重要
+- 这类问题很容易误判成“token 无效”或“仓库没权限”
+- 实际上根因可能只是:
+  - 环境变量注入范围不对
+  - 或 Git 没从正确入口拿到用户名/密码
+
+### 未来风险
+- 后续凡是涉及 GitHub HTTPS push/pull, 如果又出现 `Authentication failed` 或 `could not read Username`, 可能会再次踩到同一类坑
+
+### 当前结论
+- 先用 GitHub API `/user` 验证 token 真伪
+- 如果 token 只在 `direnv` 里可见, 就用 `direnv exec .` 包住 Git 命令
+- 如果当前 `askpass` 链路损坏, 可用临时 `askpass` 脚本稳定喂给 Git:
+  - `Username -> 账号名`
+  - `Password -> GITHUB_TOKEN`
+
+### 后续讨论入口
+- 下次再做 GitHub 推送排障时, 先回看这条和 `notes.md` 里的本次记录
+
 ## [2026-03-26 10:39:48] [Session ID: 019d28a9-9701-7013-a2b7-6683f4e4f3fe] 主题: editable path package 的宽松依赖会把已经验证成功的 Torch 栈再次拖偏
 
 ### 发现来源

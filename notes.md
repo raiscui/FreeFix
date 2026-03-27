@@ -695,3 +695,106 @@
   - `xformers 0.0.30 + cu128`
   - `cuda-toolkit 12.8.1`
 - `mmcv` 与 `pytorch3d` 从主依赖栈中移除, 是合理且有静态证据支撑的降变量动作
+
+## [2026-03-27 21:44:03] [Session ID: 019d2f6a-705e-7ca1-97af-342c1bf4e24d] 笔记: 推送到 `raiscui/FreeFix` 的认证链路验证
+
+## 来源
+
+### 来源1: 当前仓库与目标仓库状态核对
+
+- 命令: `git status --short --branch`
+- 要点:
+  - 当前工作区原本没有代码改动需要提交
+  - 本地 `main` 相对 `origin/main` 超前 1 个提交
+
+### 来源2: 目标仓库存在性验证
+
+- 命令: `git ls-remote https://github.com/raiscui/FreeFix.git HEAD`
+- 要点:
+  - 目标仓库存在
+  - 返回的远端 `HEAD` 为 `e0ec6a858a0ba644325d8ca4bbb2f7f8b74caad2`
+
+### 来源3: HTTPS 推送失败证据
+
+- 命令: `git push raiscui main:main`
+- 要点:
+  - 首次报错里出现 `Missing or invalid credentials`
+  - 后续明确退出为 `remote: No anonymous write access.` 与 `fatal: Authentication failed for 'https://github.com/raiscui/FreeFix.git/'`
+
+### 来源4: 本机认证工具与 SSH 验证
+
+- 命令: `gh auth status`
+- 要点:
+  - `gh` 未安装, 无法走 GitHub CLI 登录链路
+- 命令: `ssh -o BatchMode=yes -T git@github.com`
+- 要点:
+  - 返回 `Permission denied (publickey)`
+- 命令: `ls -la ~/.ssh`
+- 要点:
+  - 当前只有 `known_hosts`, 没有可见私钥文件
+- 命令: `printenv | rg '^(GIT_ASKPASS|SSH_AUTH_SOCK|SSH_AGENT_PID)='`
+- 要点:
+  - 仅看到 `GIT_ASKPASS` 指向 VS Code Server 的 `askpass.sh`
+  - 没有看到可用的 `SSH_AUTH_SOCK`
+
+## 综合发现
+
+### 现象
+
+- 目标仓库存在
+- 当前本机 Git 身份配置为 `raiscui <vdcoolzi@gmail.com>`
+- 但无论 HTTPS 还是 SSH, 当前会话都没有可用的 GitHub 写权限凭据
+
+### 当前假设
+
+- 主假设: 当前阻塞点是“本机没有可用的 GitHub 认证凭据”, 不是仓库地址错误, 也不是分支冲突
+- 备选解释: 目标仓库对当前账号没有写权限
+- 推翻主假设所需证据:
+  - 提供可用 PAT / GitHub CLI 登录 / SSH key 后, 推送仍然被拒绝
+
+## [2026-03-27 22:13:32] [Session ID: 019d2f6a-705e-7ca1-97af-342c1bf4e24d] 笔记: `GITHUB_TOKEN` 有效, 但 Git 需要显式 askpass 才能完成 HTTPS push
+
+## 来源
+
+### 来源1: Token 有效性验证
+
+- 命令: `direnv exec . bash -lc 'curl ... https://api.github.com/user'`
+- 要点:
+  - 返回 `HTTP_200`
+  - `login=raiscui`
+
+### 来源2: 两轮失败与一轮成功的 Git 验证
+
+- 失败验证1:
+  - 现象: `direnv` 中可见 `GITHUB_TOKEN`, 但直接额外塞 HTTP auth header 后, Git 报 `Invalid username or token`
+- 失败验证2:
+  - 现象: 改成 `raiscui:GITHUB_TOKEN` 的 Basic header 后, Git 仍进入“读用户名”路径
+- 成功验证:
+  - 做法: 用 `direnv exec .` 注入 token, 临时生成 `askpass` 脚本, 对 Git 分别返回:
+    - `Username -> raiscui`
+    - `Password -> $GITHUB_TOKEN`
+  - 关键输出:
+    - `To https://github.com/raiscui/FreeFix.git`
+    - `e0ec6a8..3fb6b57  main -> main`
+
+### 来源3: 远端回读验证
+
+- 命令: `git ls-remote https://github.com/raiscui/FreeFix.git refs/heads/main`
+- 要点:
+  - 返回 `3fb6b57b6007c36c5b0ea39e9832094727e2db52 refs/heads/main`
+
+## 综合发现
+
+### 现象
+
+- `GITHUB_TOKEN` 本身有效
+- 直接 shell 看不到 token, 但 `direnv` 子会话里能看到
+- 真正卡住推送的不是权限本身, 而是 Git 在当前环境下如何拿到 HTTPS 用户名和密码
+
+### 已验证结论
+
+- 这次成功链路是:
+  - `direnv exec .`
+  - 临时 `askpass`
+  - `git push raiscui main:main`
+- 远端 `raiscui/FreeFix` 的 `main` 已经更新到本地 `HEAD`

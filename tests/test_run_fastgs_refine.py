@@ -68,7 +68,7 @@ class RunFastGSRefineTest(unittest.TestCase):
 
         command = build_refine_command(args, bridge_output)
 
-        self.assertTrue(command[1].endswith("refine_by_sdxl.py"))
+        self.assertEqual(command[:3], [sys.executable, "-m", "ours.refine_by_sdxl"])
         self.assertEqual(command[-1], str(bridge_output))
 
     def test_run_pipeline_runs_bridge_then_refine(self) -> None:
@@ -112,7 +112,7 @@ class RunFastGSRefineTest(unittest.TestCase):
             self.assertEqual(executed_commands, commands)
             self.assertTrue(all(Path(cwd) == Path(__file__).resolve().parents[1] for cwd in executed_cwds))
             self.assertIn("recon.import_fastgs", executed_commands[0])
-            self.assertTrue(executed_commands[1][1].endswith("refine_by_flux.py"))
+            self.assertEqual(executed_commands[1][:3], [sys.executable, "-m", "ours.refine_by_flux"])
             self.assertEqual(executed_commands[1][-1], str(bridge_output_path))
 
     def test_direct_script_execution_can_reach_argparse_help(self) -> None:

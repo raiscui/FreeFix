@@ -17,8 +17,8 @@ test_rots: [0, 0, 0]
 
 # 第一版中英混合 prompt 仍被 CLIP 截到 `126 > 77`。
 # 这里进一步改成英文主锚点, 优先确保结构与核心光效词完整送进编码器。
-# prompt: "high detail. 精修图片,修复生成式图片的画面错误,模糊不清,去雾,增强清晰度,修复图片上不合理,数据错误和逻辑内容错误的部分,消除重影,增强细节,增强纹理,增强边缘."
-prompt: "high detail. Refine images, repair visual errors and blurriness in AI-generated images, perform defogging and enhance clarity. Correct unreasonable elements, data errors and illogical content in the images, remove ghosting, and boost details, textures and edges."
+# prompt: "high detail. 精修图片,修复瑕疵,修复生成式图片的画面错误,模糊不清,去雾,增强清晰度,修复图片上不合理,数据错误和逻辑内容错误的部分,消除重影,增强细节,增强纹理,增强边缘."
+prompt: "high detail. Refine images,Fix defects, repair visual errors and blurriness in AI-generated images, perform defogging and enhance clarity. Correct unreasonable elements, data errors and illogical content in the images, remove ghosting, and boost details, textures and edges."
 
 # 继续沿用旧 my4 refine 已跑通的一组参数, 先看观感, 不再同时改太多变量。
 strength: 0.65

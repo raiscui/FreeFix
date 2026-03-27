@@ -1,0 +1,28 @@
+# `my5_colmap_fastgs stable_50k_longdensify @ 49999` 的评估配置。
+# 当前先只用于 base 评估, 不展开 refine 路径。
+
+base_dir: outputs/my5_colmap_fastgs_stable_50k_longdensify
+exp_name: flux_shinkai_museum_v2
+
+refine_start_idx: 0
+refine_end_idx: 41
+
+train_start_idx: 0
+train_end_idx: 283
+
+test_split: test
+test_trans: [0, 0, 0]
+test_rots: [0, 0, 0]
+
+prompt: "high detail. Refine images, repair visual errors and blurriness in AI-generated images, perform defogging and enhance clarity. Correct unreasonable elements, data errors and illogical content in the images, remove ghosting, and boost details, textures and edges."
+
+strength: 0.65
+refine_steps: 400
+warp_ratio: 0.3
+
+hessian_attr: ["means", "quats", "scales"]
+
+data_type: colmap
+load_step: 49999
+
+flux_model_path: /home/rais/.cache/modelscope/hub/models/black-forest-labs/FLUX___1-dev

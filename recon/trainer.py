@@ -56,6 +56,67 @@ def soft_sigmoid(x, soft):
     return 1 / (1 + torch.exp(-soft * x))
 
 
+def is_scheduled_training_step(step: int, scheduled_steps: List[int]) -> bool:
+    """把 YAML 里的一基 step 配置转换成训练循环里的零基 step 判断。"""
+    return step in {scheduled_step - 1 for scheduled_step in scheduled_steps if scheduled_step > 0}
+
+
+def resolve_render_traj_range(
+    dataset_length: int,
+    start_idx: Optional[int] = None,
+    end_idx: Optional[int] = None,
+) -> range:
+    """根据数据集真实长度和可选边界, 计算安全的轨迹渲染范围。"""
+    if dataset_length <= 0:
+        raise ValueError("Cannot render trajectory because validation dataset is empty.")
+
+    resolved_start = 0 if start_idx is None else max(0, start_idx)
+    resolved_end = dataset_length if end_idx is None else min(dataset_length, end_idx)
+    if resolved_start >= resolved_end:
+        raise ValueError(
+            "Invalid render trajectory range: "
+            f"start={resolved_start}, end={resolved_end}, dataset_length={dataset_length}"
+        )
+    return range(resolved_start, resolved_end)
+
+
+def build_checkpoint_video_paths(save_dir: str, checkpoint_step: Optional[int]) -> Dict[str, str]:
+    """返回带 checkpoint 名的视频路径, 便于长期留存。"""
+    if checkpoint_step is None:
+        return {}
+    return {
+        "render": os.path.join(save_dir, f"render_ckpt_{checkpoint_step}.mp4"),
+        "alpha": os.path.join(save_dir, f"alpha_ckpt_{checkpoint_step}.mp4"),
+    }
+
+
+def publish_render_videos(
+    render_path: str,
+    alpha_path: str,
+    save_dir: str,
+    checkpoint_step: Optional[int] = None,
+) -> Dict[str, str]:
+    """把本轮导出的视频同步成最新别名, 并按需额外保留带 step 的副本。"""
+    os.makedirs(save_dir, exist_ok=True)
+
+    published_paths = {
+        "render": os.path.join(save_dir, "render.mp4"),
+        "alpha": os.path.join(save_dir, "alpha.mp4"),
+    }
+    if os.path.abspath(render_path) != os.path.abspath(published_paths["render"]):
+        shutil.copyfile(render_path, published_paths["render"])
+    if os.path.abspath(alpha_path) != os.path.abspath(published_paths["alpha"]):
+        shutil.copyfile(alpha_path, published_paths["alpha"])
+
+    checkpoint_video_paths = build_checkpoint_video_paths(save_dir, checkpoint_step)
+    if checkpoint_video_paths:
+        shutil.copyfile(render_path, checkpoint_video_paths["render"])
+        shutil.copyfile(alpha_path, checkpoint_video_paths["alpha"])
+        published_paths.update(checkpoint_video_paths)
+
+    return published_paths
+
+
 # def interpolate_poses_se3(pose_start: torch.Tensor, pose_end: torch.Tensor, interps: int) -> torch.Tensor:
 #     """
 #     Interpolate between two poses using SLERP for rotation and linear interpolation for translation.
@@ -158,6 +219,14 @@ class Config:
     eval_steps: List[int] = field(default_factory=lambda: [7_000, 30_000])
     # Steps to save the model
     save_steps: List[int] = field(default_factory=lambda: [7_000, 30_000])
+    # 训练过程中哪些 checkpoint 需要顺手导出轨迹视频。
+    # 这里沿用和 save_steps 相同的一基 step 语义, 例如 12000 对应 ckpt_11999.pt。
+    render_video_steps: List[int] = field(default_factory=list)
+    # 轨迹视频的插帧数。0 表示直接按原始 test 轨迹导出。
+    render_video_interp: int = 0
+    # 允许按 test split 的局部窗口导视频。默认 None 表示覆盖整个 valset。
+    render_video_start_idx: Optional[int] = None
+    render_video_end_idx: Optional[int] = None
 
     # Initialization strategy
     init_type: str = "sfm"
@@ -801,6 +870,7 @@ class Runner:
                     },
                     f"{self.ckpt_dir}/ckpt_{step}.pt",
                 )
+                self.maybe_render_training_video(step)
 
             # # eval the full set
             # if step in [i - 1 for i in cfg.eval_steps] or step == max_steps - 1:
@@ -825,6 +895,7 @@ class Runner:
         '''
         Note: This function is only for quantitative evaluation.
         '''
+        cfg = self.cfg
         c2ws=self.parser.camtoworlds
         Ks=np.array([self.parser.Ks_dict[camera_id].copy() for camera_id in self.parser.camera_ids])
         img_whs=np.array([self.parser.imsize_dict[camera_id] for camera_id in self.parser.camera_ids])
@@ -1013,19 +1084,59 @@ class Runner:
         np.save(f"{save_dir}/train_c2ws.npy", train_c2ws)
 
 
-    def render_traj(self, save_dir, interp=4):
+    def maybe_render_training_video(self, step: int) -> bool:
+        """按配置节奏在训练期间自动导出轨迹视频。"""
+        if not is_scheduled_training_step(step, self.cfg.render_video_steps):
+            return False
+
+        self.render_traj(
+            save_dir=os.path.join(self.cfg.result_dir, "to_refine"),
+            interp=self.cfg.render_video_interp,
+            checkpoint_step=step,
+            start_idx=self.cfg.render_video_start_idx,
+            end_idx=self.cfg.render_video_end_idx,
+        )
+        return True
+
+
+    def render_traj(
+        self,
+        save_dir,
+        interp=4,
+        checkpoint_step: Optional[int] = None,
+        start_idx: Optional[int] = None,
+        end_idx: Optional[int] = None,
+    ):
         """Entry for trajectory rendering."""
         print("Running trajectory rendering...")
         cfg = self.cfg
         device = self.device
+        os.makedirs(save_dir, exist_ok=True)
+
+        # 训练期的自动导出需要为每个 checkpoint 保留独立目录,
+        # 否则 `renders/`、`alphas/`、`masks/` 这类中间产物会互相覆盖。
+        output_dir = (
+            save_dir
+            if checkpoint_step is None
+            else os.path.join(save_dir, f"ckpt_{checkpoint_step}")
+        )
+        os.makedirs(output_dir, exist_ok=True)
 
         # modify train cam pose, used for driving scenes
         trans_mat = np.eye(4)
         trans_mat[:3, 3] = [-2.5, 0, 0]
 
         test_camtoworlds, gt_im_paths, gt_im_names, Ks, imsizes = [], [], [], [], []
-        for i in range(30, 80):
-            data = self.valset[i]
+        dataset_indices = list(
+            resolve_render_traj_range(len(self.valset), start_idx=start_idx, end_idx=end_idx)
+        )
+        print(
+            "Rendering trajectory for "
+            f"{len(dataset_indices)} validation views "
+            f"(dataset indices {dataset_indices[0]}..{dataset_indices[-1]})"
+        )
+        for dataset_idx in dataset_indices:
+            data = self.valset[dataset_idx]
             test_camtoworlds.append(data["camtoworld"] @ trans_mat)
             gt_im_paths.append(data["image_path"])
             gt_im_names.append(data["image_name"])
@@ -1050,27 +1161,29 @@ class Runner:
         test_indices = all_indices[::interp+1]
 
         # save ground truth images for evaluation
-        os.makedirs(f"{save_dir}/gts", exist_ok=True)
-        os.makedirs(f"{save_dir}/masks", exist_ok=True)
+        os.makedirs(f"{output_dir}/gts", exist_ok=True)
+        os.makedirs(f"{output_dir}/masks", exist_ok=True)
         for gt_im_path, gt_im_name in zip(gt_im_paths, gt_im_names):
-            shutil.copy(gt_im_path, f"{save_dir}/gts/{gt_im_name}")
-        np.save(f"{save_dir}/gt_indices.npy", test_indices)
-        np.save(f"{save_dir}/refine_c2ws.npy", camtoworlds)
+            shutil.copy(gt_im_path, f"{output_dir}/gts/{gt_im_name}")
+        np.save(f"{output_dir}/gt_indices.npy", test_indices)
+        np.save(f"{output_dir}/refine_c2ws.npy", camtoworlds)
 
         camtoworlds = torch.from_numpy(camtoworlds).float().to(device)
         K = torch.from_numpy(Ks[0:1]).float().to(device)
-        np.save(f"{save_dir}/ixt.npy", Ks[0:1])
+        np.save(f"{output_dir}/ixt.npy", Ks[0:1])
         width, height = imsizes[0]
-        
-        render_writer = imageio.get_writer(f"{save_dir}/render.mp4", fps=12)
-        alpha_writer = imageio.get_writer(f"{save_dir}/alpha.mp4", fps=12)
-        os.makedirs(f"{save_dir}/renders", exist_ok=True)
-        os.makedirs(f"{save_dir}/alphas", exist_ok=True)
-        os.makedirs(f"{save_dir}/depths", exist_ok=True)
+
+        render_path = os.path.join(output_dir, "render.mp4")
+        alpha_path = os.path.join(output_dir, "alpha.mp4")
+        render_writer = imageio.get_writer(render_path, fps=12)
+        alpha_writer = imageio.get_writer(alpha_path, fps=12)
+        os.makedirs(f"{output_dir}/renders", exist_ok=True)
+        os.makedirs(f"{output_dir}/alphas", exist_ok=True)
+        os.makedirs(f"{output_dir}/depths", exist_ok=True)
         mask_writers = []
         for exp_index in cfg.c_exp_index:
-            os.makedirs(f"{save_dir}/masks/exp{exp_index}", exist_ok=True)
-            writer = imageio.get_writer(f"{save_dir}/masks/exp{exp_index}.mp4", fps=12)
+            os.makedirs(f"{output_dir}/masks/exp{exp_index}", exist_ok=True)
+            writer = imageio.get_writer(f"{output_dir}/masks/exp{exp_index}.mp4", fps=12)
             mask_writers.append(writer)
         depth_save = []
         for i in tqdm.trange(len(camtoworlds), desc="Rendering trajectory"):
@@ -1082,15 +1195,15 @@ class Runner:
             )  # [1, H, W, 4]
             rendered_img = (np.clip(colors.cpu().numpy(),0,1) * 255).astype(np.uint8)
             rendered_alpha = (alphas.squeeze().cpu().numpy() * 255).astype(np.uint8)
-            imwrite(f"{save_dir}/renders/{i:03d}.jpg", rendered_img)
-            imwrite(f"{save_dir}/alphas/{i:03d}.jpg", rendered_alpha)
+            imwrite(f"{output_dir}/renders/{i:03d}.jpg", rendered_img)
+            imwrite(f"{output_dir}/alphas/{i:03d}.jpg", rendered_alpha)
 
             for j, certainties in enumerate(multi_certainties):
                 rendered_mask = (certainties.squeeze().cpu().numpy() * 255).astype(np.uint8)
-                imwrite(f"{save_dir}/masks/exp{cfg.c_exp_index[j]}/{i:03d}.jpg", rendered_mask)
+                imwrite(f"{output_dir}/masks/exp{cfg.c_exp_index[j]}/{i:03d}.jpg", rendered_mask)
                 mask_writers[j].append_data(rendered_mask)
 
-            save_depth_map_visualization(depths[..., 0].cpu().numpy(), f"{save_dir}/depths/{i:03d}.jpg")
+            save_depth_map_visualization(depths[..., 0].cpu().numpy(), f"{output_dir}/depths/{i:03d}.jpg")
             render_writer.append_data(rendered_img)
             alpha_writer.append_data(rendered_alpha)
             depth_save.append(depths.cpu().numpy())
@@ -1100,7 +1213,19 @@ class Runner:
             writer.close()
         alpha_writer.close()
         depth_save = np.stack(depth_save, axis=0)
-        np.save(f"{save_dir}/refine_depths.npy", depth_save)
+        np.save(f"{output_dir}/refine_depths.npy", depth_save)
+
+        published_video_paths = publish_render_videos(
+            render_path=render_path,
+            alpha_path=alpha_path,
+            save_dir=save_dir,
+            checkpoint_step=checkpoint_step,
+        )
+        if checkpoint_step is not None:
+            print(
+                "Published checkpoint videos to "
+                f"{published_video_paths['render']} and {published_video_paths['alpha']}"
+            )
 
     @torch.no_grad()
     def _viewer_render_fn(
@@ -1136,7 +1261,13 @@ def main(cfg: Config):
         save_dir = os.path.join(os.path.dirname(os.path.dirname(cfg.ckpt)), "to_refine")
         os.makedirs(save_dir, exist_ok=True)
         # runner.render_train_views(save_dir=save_dir)
-        runner.render_traj(save_dir=save_dir, interp=0)
+        runner.render_traj(
+            save_dir=save_dir,
+            interp=cfg.render_video_interp,
+            checkpoint_step=ckpt.get("step"),
+            start_idx=cfg.render_video_start_idx,
+            end_idx=cfg.render_video_end_idx,
+        )
 
         # # render poses from viewer
         # base_dir = os.path.dirname(os.path.dirname(cfg.ckpt))

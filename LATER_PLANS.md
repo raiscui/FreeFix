@@ -31,3 +31,23 @@
   - 是否能完全移除 `pixi.toml` 里的 `pytorch3d` 依赖
   - 是否只保留 `UniDepth` 自己的 `ops/knn`
   - 如果不能移除, 再决定是升到 `v0.7.9` 还是改走 `main/补丁版`
+
+## [2026-03-27 21:44:58] [Session ID: 019d2f6a-705e-7ca1-97af-342c1bf4e24d] 主题: 补齐 GitHub 认证后继续推送到 `raiscui/FreeFix`
+
+### 待后续处理事项
+- 当前本地已新增远端:
+  - `raiscui -> https://github.com/raiscui/FreeFix.git`
+- 当前待推送提交仍是:
+  - `3fb6b57b6007c36c5b0ea39e9832094727e2db52`
+- 继续前需要先补齐一种可用认证:
+  - GitHub PAT
+  - 或安装并登录 `gh`
+  - 或配置可用 SSH key / agent
+- 认证补齐后, 直接执行:
+  - `git push raiscui main:main`
+
+## [2026-03-27 22:13:32] [Session ID: 019d2f6a-705e-7ca1-97af-342c1bf4e24d] 主题: `raiscui/FreeFix` 推送待办已落地
+
+### 待后续处理事项
+- 上一条“补齐认证后继续推送到 `raiscui/FreeFix`”已完成
+- 当前无需继续跟进这条待办

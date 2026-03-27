@@ -1,0 +1,82 @@
+# `my5_colmap_fastgs` 的 50k 长 densify 训练配置。
+# 这条线以当前 `35k base` 为母线,
+# 明确保留 `app_opt=false`, 只验证:
+# - 更长训练窗口
+# - 更长 densify 窗口
+
+disable_viewer: true
+ckpt: null
+data_type: colmap
+
+data_dir: /home/rais/FastGS/data/my5_colmap_fastgs
+data_factor: 1
+result_dir: outputs/my5_colmap_fastgs_stable_50k_longdensify
+test_every: 8
+patch_size: null
+global_scale: 1.0
+
+port: 8080
+batch_size: 1
+steps_scaler: 1.0
+
+# 把 base 训练窗口从 35k 拉到 50k。
+# 同时保留 35k 节点, 便于回看“长 densify 到 35k 时已经发生了什么”。
+max_steps: 50000
+eval_steps: [12000, 30000, 35000, 50000]
+save_steps: [12000, 30000, 35000, 50000]
+
+# 保持训练过程的视频节奏可追踪。
+render_video_steps: [12000, 30000, 35000, 50000]
+render_video_interp: 0
+
+init_type: sfm
+init_num_pts: 100000
+init_extent: 3.0
+sh_degree: 3
+sh_degree_interval: 1000
+init_opa: 0.1
+init_scale: 1.0
+ssim_lambda: 0.2
+
+near_plane: 0.01
+far_plane: 10000000000.0
+
+strategy: default
+prune_opa: 0.005
+grow_grad2d: 0.0002
+grow_scale3d: 0.01
+prune_scale3d: 0.1
+refine_start_iter: 500
+
+# 当前假设是: `35k base` 的很多瑕疵来自几何容量冻结太早。
+# 因此这里不只是拉长训练, 还把 densify / prune 窗口同步延长到 30k。
+refine_stop_iter: 30000
+reset_every: 3000
+refine_every: 200
+
+packed: false
+sparse_grad: false
+absgrad: false
+antialiased: false
+revised_opacity: false
+
+random_bkgd: false
+
+pose_opt: true
+pose_opt_lr: 0.00001
+pose_opt_reg: 0.000001
+pose_noise: 0.0
+
+# 继续保持 `app_opt=false`, 避免影响 checkpoint 迁移语义。
+app_opt: false
+app_embed_dim: 16
+app_opt_lr: 0.001
+app_opt_reg: 0.000001
+
+depth_loss: true
+depth_lambda: 0.01
+
+tb_every: 100
+tb_save_image: false
+
+c_exp_index: [0.001, 0.01, 0.1]

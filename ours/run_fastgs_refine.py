@@ -127,12 +127,11 @@ def default_bridge_output_path(source_path: Path) -> Path:
     return output_dir / f"{choose_bridge_label(source_path)}_freefix.pt"
 
 
-def get_refine_script_path(backend: str) -> Path:
-    ours_dir = Path(__file__).resolve().parent
+def get_refine_module_name(backend: str) -> str:
     if backend == "flux":
-        return ours_dir / "refine_by_flux.py"
+        return "ours.refine_by_flux"
     if backend == "sdxl":
-        return ours_dir / "refine_by_sdxl.py"
+        return "ours.refine_by_sdxl"
     raise ValueError(f"不支持的 refine backend: {backend}")
 
 
@@ -164,7 +163,8 @@ def build_bridge_command(args: argparse.Namespace, source_path: Path, bridge_out
 def build_refine_command(args: argparse.Namespace, bridge_output_path: Path) -> list[str]:
     command = [
         sys.executable,
-        str(get_refine_script_path(args.refine_backend)),
+        "-m",
+        get_refine_module_name(args.refine_backend),
         "--exp_cfg",
         str(args.exp_cfg.expanduser().resolve()),
         "--base_cfg",
