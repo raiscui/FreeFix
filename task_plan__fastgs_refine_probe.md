@@ -333,3 +333,193 @@
 ## 状态
 
 **目前已完成** - `hessian_attr` 的语义、字段含义和“想让 refine 纠正结构时如何配置”的建议都已用代码证据核实完成。
+
+## [2026-03-28 17:18:41] [Session ID: 019d33ba-5b20-7711-bf05-b3380d192c53] [记录类型]: 接手“最终 refine 输出 3DGS PLY”收尾任务
+
+## 目标
+
+- 让 FastGS -> FreeFix refine 链路在最终保存 refined checkpoint 后, 能继续稳定导出可复用的 3DGS `.ply`。
+- 尽量复用现有 [export_3dgs_ply.py](/root/autodl-tmp/home/rais/FreeFix/recon/export_3dgs_ply.py) 能力, 避免再平行造一套导出逻辑。
+
+## 阶段
+
+- [x] 阶段1: 回读 `fastgs_refine_probe` 支线上下文, 确认当前链路已支持 bridge / refine / wrapper
+- [x] 阶段2: 静态核实 refined checkpoint 的保存位置与现有 PLY 导出脚本契约
+- [ ] 阶段3: 补齐 refine 结束后的 `.ply` 导出能力
+- [ ] 阶段4: 同步 wrapper / CLI 契约与输出路径
+- [ ] 阶段5: 跑回归测试与 CLI 验证
+- [ ] 阶段6: 回写支线记录并整理最终使用方式
+
+## 关键问题
+
+1. 当前现象:
+   - `ours/refine_by_flux.py` 和 `ours/refine_by_sdxl.py` 结束时只会执行 `refiner.save(name=f"ckpt_{cfg.exp_name}")`
+   - `ours/run_fastgs_refine.py` 当前只串联 bridge + refine, 不包含 `.ply` 导出阶段
+   - 现有 [export_3dgs_ply.py](/root/autodl-tmp/home/rais/FreeFix/recon/export_3dgs_ply.py) 已经能把 FreeFix checkpoint 导出成标准 3DGS PLY
+2. 当前主假设:
+   - 缺口主要在 orchestration 的最后一步没有接上, 不是 bridge 字段映射或 refine 保存逻辑再次失配
+3. 最强备选解释:
+   - 也可能 refined checkpoint 的命名 / 路径和导出脚本默认预期并不完全一致, 需要先补路径解析辅助函数再导出
+4. 验证计划:
+   - 先把 refined ckpt -> ply 的导出逻辑抽成可复用函数
+   - 再让 refine 主入口在保存 ckpt 后直接导出
+   - 最后让 wrapper 和单测一起覆盖这条最终输出链
+
+## 做出的决定
+
+- 决定23: 优先补强 refine 主入口本身, 而不是只把导出能力藏在 wrapper 里。
+- 决定24: 默认继续沿用“改良已有逻辑”的路线, 复用现有 `export_3dgs_ply.py`, 不重写 PLY 序列化。
+
+## 状态
+
+**目前在阶段3** - 正在把 refined checkpoint 的最终 `.ply` 导出接进现有 refine 流程。
+
+## [2026-03-28 17:26:01] [Session ID: 019d33ba-5b20-7711-bf05-b3380d192c53] [记录类型]: refine 最终 3DGS PLY 输出已补齐并验证
+
+## 阶段
+
+- [x] 阶段1: 回读 `fastgs_refine_probe` 支线上下文, 确认当前链路已支持 bridge / refine / wrapper
+- [x] 阶段2: 静态核实 refined checkpoint 的保存位置与现有 PLY 导出脚本契约
+- [x] 阶段3: 补齐 refine 结束后的 `.ply` 导出能力
+- [x] 阶段4: 同步 wrapper / CLI 契约与输出路径
+- [x] 阶段5: 跑回归测试与 CLI 验证
+- [x] 阶段6: 回写支线记录并整理最终使用方式
+
+## 关键问题
+
+1. 最终导出是怎么接上的:
+   - `ours/run_fastgs_refine.py` 现在会在 bridge 和 refine 之后, 再调用 `python -m recon.export_3dgs_ply`
+   - 默认输出路径是 `<result_dir>/point_cloud_<exp_name>.ply`
+2. 路径是如何推导的:
+   - 先从 `base_cfg + exp_cfg` 里轻量解析 `base_dir / exp_name / gs_cfg_file`
+   - 再读取 `<base_dir>/<gs_cfg_file>` 里的 `result_dir`
+   - 避免把 `base_dir` 和底层 `result_dir` 混为一谈
+3. 动态验证结果:
+   - `python3 -m py_compile ours/run_fastgs_refine.py tests/test_run_fastgs_refine.py` 通过
+   - `timeout 30s ... python -m unittest tests.test_run_fastgs_refine` 通过, 共 `9` 项
+   - `timeout 10s python3 ours/run_fastgs_refine.py --help` 成功输出新参数
+   - `python3 ours/run_fastgs_refine.py --ckpt-path /tmp/demo_fastgs.pth --colmap-path data/my4_fullcolmap --exp-cfg exp_cfg/my4/flux_shinkai_museum_v2.yaml --dry-run` 成功打印三条命令, 含最终 `.ply` 输出路径
+
+## 做出的决定
+
+- 决定25: 最终 `.ply` 导出放在 wrapper 里作为显式第三步, 保持 refine 脚本职责单一。
+- 决定26: wrapper 不再为了推导最终产物路径提前依赖 `OmegaConf`, 改用轻量键值解析, 保证 `--dry-run` 也能直接工作。
+
+## 状态
+
+**目前已完成** - FastGS -> FreeFix refine 一条命令链路现在已经包含最终 3DGS PLY 导出, 并有单测与 dry-run 证据支撑。
+
+## [2026-03-29 10:52:28] [Session ID: 019d3934-ae28-7011-acaa-2f5fa77d5f39] [记录类型]: 探索“随机相机偏移 + Flux 图生图”用于 refine 的设计可行性
+
+## 目标
+
+判断是否适合把当前按 `test_dataset` 固定视角渲染 -> `Flux img2img` -> `refine` 的流程, 扩展成“从现有相机附近随机采样新视角, 渲染后做图生图, 再作为 synthetic refine 图”的流程, 并明确它更像增广分支、还是应该替换当前主流程。
+
+## 阶段
+
+- [x] 阶段1: 回读 refine 支线历史与当前 refine 主链路
+- [x] 阶段2: 定位随机偏移视角可插入的位置与当前不变量
+- [ ] 阶段3: 比较“直接替换固定视角”与“增加 synthetic 分支”两条路线
+- [ ] 阶段4: 给出适合写入 OpenSpec 的设计边界、风险与验证建议
+
+## 关键问题
+
+1. 当前 refine 是否已经是图生图链路: 是。`ours/refine_by_flux.py` 已经把 `refiner.render(i)` 的渲染图作为 `image=rgb_to_refine` 传进 `FluxPipeline`。
+2. 当前生成 supervision 是否绑定同一份相机参数: 是。生成结果会与同一帧的 `c2w + K` 一起写进 `refine_cams`, 再喂给 `refiner.refine(...)`。
+3. 如果改成随机偏移相机, 当前最核心风险是什么: 不是“Flux 能不能生成”, 而是新视角生成内容是否仍和当前几何一致。一旦偏移超出已有场景支持范围, hallucination 会被当成监督信号写回高斯。
+4. 当前最强备选解释是什么: 这条路线未必应该叫“refine 更强”, 它也可能本质上是一个 novel-view bootstrapping / synthetic view augmentation 分支, 设计约束应和现在的“按固定测试视角做局部修饰”分开。
+
+## 做出的决定
+
+- 决定17: 本轮先保持 explore 模式, 只做设计判断, 不直接实现。
+- 决定18: 优先评估“增加 synthetic 分支”而不是直接替换现有固定视角链路, 先保住当前可复现、可对照的 refine 主流程。
+- 决定19: 讨论口径继续保持“现象 -> 假设 -> 验证计划 -> 结论”, 暂不把这条想法直接定性为一定更优。
+
+## 状态
+
+**目前在阶段3** - 已确认随机偏移视角的插入点, 正在比较它是“安全增广”还是“会把错误几何放大”的方案。
+
+## [2026-03-29 10:53:59] [Session ID: 019d3934-ae28-7011-acaa-2f5fa77d5f39] [记录类型]: 随机相机偏移版 refine 设计探索完成, 进入可写 spec 状态
+
+## 阶段
+
+- [x] 阶段1: 回读 refine 支线历史与当前 refine 主链路
+- [x] 阶段2: 定位随机偏移视角可插入的位置与当前不变量
+- [x] 阶段3: 比较“直接替换固定视角”与“增加 synthetic 分支”两条路线
+- [x] 阶段4: 给出适合写入 OpenSpec 的设计边界、风险与验证建议
+
+## 关键问题
+
+1. 哪条路线更合适: 当前更推荐“增加受控 synthetic 分支”, 不建议直接替换现有固定视角 refine 主链。
+2. 第一版最重要的边界是什么: 只做小幅 pose jitter, 不把它当成大范围 novel-view hallucination 工具。
+3. 为什么不能和 benchmark 视角混用: 因为当前 refine 本来就直接消费 `test_split` 样本; 如果在这些视角附近继续采样并训练, 评测口径会被污染。
+4. 这条想法现在处于什么成熟度: 已经足够写成 design / spec, 但还不适合跳过最小验证直接开做大版本实现。
+
+## 做出的决定
+
+- 决定20: 如果进入实现, 第一版只做 config 驱动的小扰动相机采样, 不引入大范围路径生成。
+- 决定21: 如果要保 benchmark 公平, 需要把 refine source split 和 eval split 明确拆开。
+- 决定22: 实施前先做最小验证实验, 观察小扰动是否真的提高视角一致性, 而不是只看生成图更好看。
+
+## 状态
+
+**目前已完成** - 随机相机偏移版 Flux refine 的设计讨论已经收敛到可写 OpenSpec 的粒度, 后续可以直接转 proposal / design。
+
+## [2026-03-29 10:58:30] [Session ID: 019d3934-ae28-7011-acaa-2f5fa77d5f39] [记录类型]: 手工创建 OpenSpec change 并补齐 apply-ready artifacts
+
+## 目标
+
+把“受控 pose jitter synthetic refine”从口头设计正式落成 OpenSpec change, 让后续实现可以直接按 proposal / design / tasks / spec 往下走。
+
+## 阶段
+
+- [x] 阶段1: 确认当前仓库是否已有 OpenSpec 目录与 CLI
+- [x] 阶段2: 对齐 OpenSpec change 的常见目录结构与文档骨架
+- [x] 阶段3: 创建 change 并补齐 proposal / design / tasks / capability spec
+- [x] 阶段4: 回读工件, 确认内容已达到可继续实现的粒度
+
+## 关键问题
+
+1. 当前仓库是否已有 OpenSpec 结构: 没有, `openspec/` 之前不存在。
+2. 当前机器是否能直接用 `openspec` CLI 建 change: 不能, 本地 `openspec` 命令不在 PATH。
+3. 这是否会阻断 change 创建: 不会。已参考其他仓库的 OpenSpec 结构手工建立标准目录与工件。
+4. 当前这条 change 是否已经到 apply-ready 粒度: 是。`proposal.md`、`design.md`、`tasks.md` 和 `specs/pose-jitter-refine/spec.md` 都已创建。
+
+## 做出的决定
+
+- 决定23: change 名称采用 `add-pose-jitter-refine`, 直接对应这次探索出的核心能力。
+- 决定24: 在 CLI 缺失的前提下, 先按 spec-driven 的常见结构手工创建完整工件, 不等待环境补齐。
+- 决定25: 第一版 OpenSpec 明确保留 fixed refine 主链, 将 pose jitter 定义为受控的新分支。
+
+## 状态
+
+**目前已完成** - OpenSpec change `add-pose-jitter-refine` 已创建完成, 工件已经齐到可继续实现的粒度。
+
+## [2026-03-29 11:19:26] [Session ID: 019d3934-ae28-7011-acaa-2f5fa77d5f39] [记录类型]: 按 ff-change 口径复核 pose jitter change 已达 apply-ready
+
+## 目标
+
+确认 `add-pose-jitter-refine` 是否已经具备 `openspec-ff-change` 所要求的实现前 artifacts, 并补齐这次快进式建模的状态记录。
+
+## 阶段
+
+- [x] 阶段1: 回读现有 change 工件与支线记录
+- [x] 阶段2: 复核 proposal / design / tasks / spec 是否齐全
+- [x] 阶段3: 判断是否还缺实现前必要 artifacts
+- [x] 阶段4: 回写 ff-change 结果
+
+## 关键问题
+
+1. `add-pose-jitter-refine` 是否已存在: 是。
+2. 当前 change 的 proposal / design / tasks / spec 是否都已落盘: 是。
+3. 是否还发现缺失的实现前工件: 没有。按常见 spec-driven 骨架, 目前已经到可实现状态。
+4. 当前环境里是否能跑 `openspec status` 做官方确认: 不能, 因为本机仍缺少 `openspec` CLI。
+
+## 做出的决定
+
+- 决定26: 本次按 `ff-change` 语义, 将当前 change 视为“已完成 artifacts 快进创建”。
+- 决定27: 后续若直接进入实现, 就以现有 `tasks.md` 为执行入口, 不再等待 CLI 补齐。
+
+## 状态
+
+**目前已完成** - `add-pose-jitter-refine` 已具备实现前需要的核心 OpenSpec 工件, 可以直接进入 apply / implementation。

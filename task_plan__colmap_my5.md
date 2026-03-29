@@ -971,3 +971,445 @@
 ## 状态
 
 **目前已完成全部阶段** - bridge 掉分来源已经锁定到导入归一化阶段, 更具体地说是“高阶 SH 系数未随全局旋转变换”, 当前只差把结论和后续修复建议交付给用户。
+
+## [2026-03-27 19:43:14] [Session ID: 20260327T194314Z-main] [记录类型]: 继续执行 bridge 修复, 目标是补齐 SH rotation 并复验真实评估
+
+## 目标
+
+- 在 `recon.import_fastgs` 中补齐高阶 SH 的全局旋转变换。
+- 用单测和真实 `my5_nomask_v1` bridge 评估确认:
+  - 修复后 normalized bridge base 应明显接近 raw / FastGS 原始结果
+
+## 阶段
+
+- [ ] 阶段1: 选定 SH rotation 实现方案并完成代码修改
+- [ ] 阶段2: 补回归测试, 覆盖 DC-only 不变与旋转一致性
+- [ ] 阶段3: 运行静态验证与单测
+- [ ] 阶段4: 重跑真实 bridge 评估并核对指标回升幅度
+
+## 关键问题
+
+1. 这次修复的目标是否足够单一:
+   - 已验证事实:
+     - 当前主损失已锁定在 `shN` 旋转缺失
+   - 当前决定:
+     - 本轮只修 SH rotation, 不顺手改别的 bridge 逻辑
+2. 修复成功的最小证据是什么:
+   - 验证计划:
+     - `DC-only` 回归仍需保持不变
+     - full SH 的 normalized bridge 真实评估应明显接近 raw `27.19`
+
+## 做出的决定
+
+- 决定34: 这轮先做最正确修复, 不做“只把 SHN 清零”的临时补丁。
+- 决定35: 修完后直接用 `my5_nomask_v1` 真实 bridge 重评估, 不只停留在单测。
+
+## 状态
+
+**目前在阶段1** - 正在选定 SH rotation 实现方案, 接下来直接修改 `recon.import_fastgs.py` 并补测试。
+
+## [2026-03-27 21:19:24] [Session ID: 20260327T194314Z-main] [记录类型]: SH rotation 修复与真实 bridge 复验完成
+
+## 阶段
+
+- [x] 阶段1: 选定 SH rotation 实现方案并完成代码修改
+- [x] 阶段2: 补回归测试, 覆盖 DC-only 不变与旋转一致性
+- [x] 阶段3: 运行静态验证与单测
+- [x] 阶段4: 重跑真实 bridge 评估并核对指标回升幅度
+
+## 关键问题
+
+1. 修复后真实指标回升到什么程度:
+   - 已验证事实:
+     - 修复后 fixed bridge `test`:
+       - `PSNR 27.188240097790228`
+       - `SSIM 0.8906744631325326`
+       - `LPIPS 0.2037334242245046`
+     - 修复前 old bridge `test`:
+       - `PSNR 23.95420037246332`
+       - `SSIM 0.848878347292179`
+       - `LPIPS 0.2550300701362331`
+     - FastGS 原始记录:
+       - `PSNR 27.203941345214844`
+       - `SSIM 0.8910136222839355`
+       - `LPIPS 0.20262764394283295`
+   - 已验证结论:
+     - 修复后 bridge base 已经基本追平 FastGS 原始结果
+2. 修复增量是否足够大:
+   - 已验证事实:
+     - fixed - old:
+       - `PSNR +3.2340`
+       - `SSIM +0.04180`
+       - `LPIPS -0.05130`
+     - fixed - FastGS:
+       - `PSNR -0.0157`
+       - `SSIM -0.00034`
+       - `LPIPS +0.00111`
+   - 已验证结论:
+     - 当前残余误差已经进入极小范围, 可以把这次 bridge 掉分 bug 视为已修复
+
+## 做出的决定
+
+- 决定36: 把新的修复版 bridge checkpoint 固化为 canonical 文件:
+  - `data/fastgs_bridge/my5_nomask_v1/ckpt_35000_freefix.pt`
+- 决定37: 旧错误版本保留为备份:
+  - `data/fastgs_bridge/my5_nomask_v1/ckpt_35000_pre_shfix_freefix.pt`
+
+## 状态
+
+**目前已完成全部阶段** - 代码修复、单测、真实 bridge 导入、真实评估和 canonical checkpoint 更新都已完成。
+
+## [2026-03-27 21:24:17] [Session ID: 20260327T212417Z-main] [记录类型]: 基于修复后 canonical bridge checkpoint 再跑一轮 refine 与评估
+
+## 目标
+
+- 基于已经修复 SH rotation 的 canonical bridge checkpoint:
+  - `data/fastgs_bridge/my5_nomask_v1/ckpt_35000_freefix.pt`
+  再跑一轮新的 refine。
+- 这轮 rerun 不覆盖旧的:
+  - `flux_shinkai_museum_v2_fastgs_my5_nomask_v1_35000`
+  也不覆盖仅含 base 评估的:
+  - `flux_shinkai_museum_v2_fastgs_my5_nomask_v1_35000_fixsh`
+- 跑完后拿到 3 组同口径结果:
+  - 旧 bridge refine
+  - 修复后 bridge base
+  - 修复后 bridge refine rerun
+
+## 阶段
+
+- [ ] 阶段1: 新建 fixsh rerun 专用 refine 配置, 锁定独立 exp_name
+- [ ] 阶段2: 串行运行修复后 bridge 的真实 refine
+- [ ] 阶段3: 运行修复后 bridge 的 base + refined 评估
+- [ ] 阶段4: 汇总 rerun 结果并更新支线记录
+
+## 关键问题
+
+1. 这轮 rerun 的变量是否足够单一:
+   - 已验证事实:
+     - bridge 掉分 bug 已修复
+     - canonical `ckpt_35000_freefix.pt` 已经是修复后的版本
+   - 当前决定:
+     - 本轮只替换起始 bridge checkpoint
+     - refine 参数继续沿用:
+       - `strength: 0.65`
+       - `refine_steps: 400`
+       - `warp_ratio: 0.3`
+2. 如何避免覆盖旧证据:
+   - 当前决定:
+     - 新建独立配置文件
+     - 新 exp_name 固定为:
+       - `flux_shinkai_museum_v2_fastgs_my5_nomask_v1_35000_fixsh_rerun`
+3. 这轮最小成功证据是什么:
+   - 验证计划:
+     - refine 目录需要完整落盘:
+       - `before_refine.mp4`
+       - `after_refine.mp4`
+       - `ckpt_flux_shinkai_museum_v2_fastgs_my5_nomask_v1_35000_fixsh_rerun.pt`
+     - 评估后至少要能回答:
+       - 修复 bridge bug 后, refine 还剩多少真实收益
+
+## 做出的决定
+
+- 决定38: 本轮 refine 显式使用当前 canonical bridge checkpoint:
+  - `data/fastgs_bridge/my5_nomask_v1/ckpt_35000_freefix.pt`
+- 决定39: 评估仍然使用 `--ckpt-path`, 确保 base 评估的是外部 bridge checkpoint, 而不是误读 `base_dir/ckpts` 里的别的文件。
+
+## 状态
+
+**目前在阶段1** - 正在补 fixsh rerun 的独立配置, 下一步直接启动真实 refine。
+
+## [2026-03-27 21:24:17] [Session ID: 20260327T212417Z-main] [记录类型]: fixsh rerun 配置已创建, refine 已启动
+
+## 阶段
+
+- [x] 阶段1: 新建 fixsh rerun 专用 refine 配置, 锁定独立 exp_name
+- [ ] 阶段2: 串行运行修复后 bridge 的真实 refine
+- [ ] 阶段3: 运行修复后 bridge 的 base + refined 评估
+- [ ] 阶段4: 汇总 rerun 结果并更新支线记录
+
+## 关键问题
+
+1. refine 是否已经真正开始:
+   - 已验证事实:
+     - 日志命中:
+       - `[Parser] 324 images`
+       - `Using Flux model source: /home/rais/.cache/modelscope/hub/models/black-forest-labs/FLUX___1-dev`
+       - `Loading pipeline components... 100%`
+   - 当前结论:
+     - 本轮 rerun 的 refine 入口已正常启动
+
+## 做出的决定
+
+- 决定40: 继续保持串行执行, refine 结束前不启动别的训练或评估任务。
+
+## 状态
+
+**目前在阶段2** - fixsh rerun 的真实 refine 已启动, 正在等待完整落盘。
+
+## [2026-03-27 21:35:37] [Session ID: 20260327T212417Z-main] [记录类型]: fixsh rerun refine 已完成, 转入 base + refined 评估
+
+## 阶段
+
+- [x] 阶段1: 新建 fixsh rerun 专用 refine 配置, 锁定独立 exp_name
+- [x] 阶段2: 串行运行修复后 bridge 的真实 refine
+- [ ] 阶段3: 运行修复后 bridge 的 base + refined 评估
+- [ ] 阶段4: 汇总 rerun 结果并更新支线记录
+
+## 关键问题
+
+1. refine 是否完整收口:
+   - 已验证事实:
+     - `before_refine/`: `41` 张
+     - `refine/gen/`: `41` 张
+     - `after_refine/`: `41` 张
+     - 已落盘:
+       - `ckpt_flux_shinkai_museum_v2_fastgs_my5_nomask_v1_35000_fixsh_rerun.pt`
+       - `before_refine.mp4`
+       - `after_refine.mp4`
+   - 已验证结论:
+     - 这轮 fixsh rerun refine 已完整结束
+
+## 做出的决定
+
+- 决定41: 现在直接用同一份 exp cfg 执行 base + refined 评估, 不再插入别的实验。
+
+## 状态
+
+**目前在阶段3** - fixsh rerun refine 已完成, 正在执行 base 和 refined 的真实评估。
+
+## [2026-03-27 21:37:03] [Session ID: 20260327T212417Z-main] [记录类型]: fixsh rerun 的 base + refined 评估完成, 本轮闭环
+
+## 阶段
+
+- [x] 阶段1: 新建 fixsh rerun 专用 refine 配置, 锁定独立 exp_name
+- [x] 阶段2: 串行运行修复后 bridge 的真实 refine
+- [x] 阶段3: 运行修复后 bridge 的 base + refined 评估
+- [x] 阶段4: 汇总 rerun 结果并更新支线记录
+
+## 关键问题
+
+1. 修复后 bridge refine 还剩多少真实收益:
+   - 已验证事实:
+     - 修复后 base `test`:
+       - `PSNR 27.188240097790228`
+       - `SSIM 0.8906744631325326`
+       - `LPIPS 0.2037334242245046`
+     - 修复后 refined `test`:
+       - `PSNR 26.752713505814715`
+       - `SSIM 0.8825770921823455`
+       - `LPIPS 0.22314650619902263`
+     - refined - base:
+       - `PSNR -0.4355`
+       - `SSIM -0.00810`
+       - `LPIPS +0.01941`
+   - 已验证结论:
+     - 同一组 refine 参数在修复后 bridge 上仍会把 GT 指标拉差
+2. 新 rerun 相对旧 bridge refine 有没有改善:
+   - 已验证事实:
+     - 新 refined `test` - 旧 refined `test`:
+       - `PSNR +0.1393`
+       - `SSIM +0.00223`
+       - `LPIPS +0.00205`
+   - 已验证结论:
+     - 修复 bridge bug 后再 refine, 相比旧 bridge refine 确实略有改善
+     - 但仍然没有超过修复后的 base
+3. bridge base 与 FastGS 原始记录现在还差多少:
+   - 已验证事实:
+     - base - FastGS:
+       - `PSNR -0.0157`
+       - `SSIM -0.00034`
+       - `LPIPS +0.00111`
+   - 已验证结论:
+     - 当前 canonical bridge base 已经基本追平 FastGS 原始 benchmark
+
+## 做出的决定
+
+- 决定42: 当前 `35000` bridge 路线的默认量化基线应切换为修复后的 canonical base, 而不是旧 bridge refine。
+- 决定43: 如果后面继续追主观观感, 下一步应该做的是轻量 refine 参数搜索, 不是继续沿用这组偏强参数。
+
+## 状态
+
+**目前已完成全部阶段** - fixsh rerun 的配置、真实 refine、真实评估和对比结论都已完成。
+
+## [2026-03-28 17:37:14] [Session ID: 019d33ba-5b20-7711-bf05-b3380d192c53] [记录类型]: 按用户要求直接导出 fixsh rerun 的最终 3DGS PLY
+
+## 目标
+
+- 直接把 `flux_shinkai_museum_v2_fastgs_my5_nomask_v1_35000_fixsh_rerun` 的 refined checkpoint 导出成最终 `.ply`
+- 给出实际落盘路径, 不再停留在“有没有”的口头判断
+
+## 阶段
+
+- [x] 阶段1: 确认 exp cfg、base_dir 与 refined checkpoint 是否存在
+- [ ] 阶段2: 执行 checkpoint -> `.ply` 导出
+- [ ] 阶段3: 验证文件落盘并补记录
+
+## 关键问题
+
+1. 已验证事实:
+   - refined checkpoint 已存在:
+     - `outputs/my5_colmap_fastgs_stable_35k_dense/ckpts/ckpt_flux_shinkai_museum_v2_fastgs_my5_nomask_v1_35000_fixsh_rerun.pt`
+   - 目前尚未找到对应 `.ply`
+2. 当前动作:
+   - 直接调用 `recon.export_3dgs_ply` 导出
+3. 默认目标路径:
+   - `outputs/my5_colmap_fastgs_stable_35k_dense/point_cloud_flux_shinkai_museum_v2_fastgs_my5_nomask_v1_35000_fixsh_rerun.ply`
+
+## 做出的决定
+
+- 决定44: 不再等待 wrapper 或后续流程补导出, 这轮直接从现存 refined checkpoint 导出最终 `.ply`
+
+## 状态
+
+**目前在阶段2** - 正在执行 fixsh rerun refined checkpoint 的 `.ply` 导出。
+
+## [2026-03-28 17:37:14] [Session ID: 019d33ba-5b20-7711-bf05-b3380d192c53] [记录类型]: fixsh rerun 最终 3DGS PLY 已导出并校验
+
+## 阶段
+
+- [x] 阶段1: 确认 exp cfg、base_dir 与 refined checkpoint 是否存在
+- [x] 阶段2: 执行 checkpoint -> `.ply` 导出
+- [x] 阶段3: 验证文件落盘并补记录
+
+## 关键问题
+
+1. 导出命令:
+   - `/root/autodl-tmp/home/rais/FreeFix/.pixi/envs/default/bin/python3 -m recon.export_3dgs_ply --ckpt /root/autodl-tmp/home/rais/FreeFix/outputs/my5_colmap_fastgs_stable_35k_dense/ckpts/ckpt_flux_shinkai_museum_v2_fastgs_my5_nomask_v1_35000_fixsh_rerun.pt --output /root/autodl-tmp/home/rais/FreeFix/outputs/my5_colmap_fastgs_stable_35k_dense/point_cloud_flux_shinkai_museum_v2_fastgs_my5_nomask_v1_35000_fixsh_rerun.ply`
+2. 关键输出:
+   - `gaussian_count: 159281`
+   - `property_count: 62`
+3. 落盘校验:
+   - 文件已存在:
+     - `outputs/my5_colmap_fastgs_stable_35k_dense/point_cloud_flux_shinkai_museum_v2_fastgs_my5_nomask_v1_35000_fixsh_rerun.ply`
+   - 文件大小:
+     - `38M`
+   - `file` 识别结果:
+     - `PLY model, binary, little endian, version 1.0`
+
+## 做出的决定
+
+- 决定45: 这份 rerun 结果现在以 `ckpt + final ply` 两种形态同时保留, 便于后续 viewer / 外部工具链复用。
+
+## 状态
+
+**目前已完成** - fixsh rerun 的最终 `.ply` 已直接导出并完成基础校验。
+
+## [2026-03-28 17:55:00] [Session ID: 945d570e-8f9a-4112-9004-6a0f244a9a65] [记录类型]: 为 `after_refine.mp4` 制作镜头轨迹动画数据导出工具
+
+## 目标
+
+- 为 `outputs/my5_colmap_fastgs_stable_35k_dense/flux_shinkai_museum_v2_fastgs_my5_nomask_v1_35000_fixsh_rerun/after_refine.mp4` 导出可复用的镜头轨迹动画数据文件。
+- 导出结果必须和视频逐帧一一对应, 不能把训练期 `to_refine` 轨迹误当成 refine 后视频轨迹。
+
+## 阶段
+
+- [x] 阶段1: 回读 `colmap_my5` 支线上下文并确认目标视频来源
+- [ ] 阶段2: 验证 `after_refine.mp4` 的真实相机来源与现有 sidecar 的关系
+- [ ] 阶段3: 实现导出工具并补最小回归测试
+- [ ] 阶段4: 对目标视频真实导出并校验落盘结果
+
+## 关键问题
+
+1. 当前现象:
+   - `after_refine.mp4` 位于 `fixsh_rerun` refine 输出目录, 共 `41` 帧。
+   - `recon/trainer.py::render_traj()` 也会生成 `41` 帧 `refine_c2ws.npy`, 但那条链路属于训练阶段 `to_refine`, 且静态代码显示它对 `camtoworld` 额外右乘了平移矩阵。
+2. 当前主假设:
+   - `after_refine.mp4` 的真实镜头轨迹来自 `Refiner.test_dataset[idx]["camtoworld"]`, 也就是 `refine_by_flux.py` 在 `refine_start_idx..refine_end_idx` 范围内逐帧调用 `refiner.render(i)` 的那组测试相机。
+3. 最强备选解释:
+   - 如果真实比对发现 `after_refine.mp4` 与 `to_refine/ckpt_34999/refine_c2ws.npy` 完全一致, 那说明当前 `my5` 这条线上训练期导出轨迹和 refine 测试轨迹恰好重合, 工具可以直接复用 sidecar。
+4. 计划路线:
+   - 方案A(最佳方案): 直接从 `exp_cfg/base_dir/cfg.json + test split + refine_start/end` 重建真实相机序列, 再导出 JSON 动画数据。
+   - 方案B(先能用方案): 如果检测到目标视频和某个现有 `refine_c2ws.npy` 完全同构, 允许直接从 sidecar 快速导出, 但仍要在元数据里标明来源口径。
+
+## 做出的决定
+
+- 决定46: 继续沿用 `colmap_my5` 支线文件, 不另开新后缀, 因为这件事直接服务于同一条 `fixsh_rerun` 结果链路。
+- 决定47: 不走“从 MP4 像素反推位姿”的路线。优先导出真实相机元数据, 这样结果才可验证、可复现、可再次渲染。
+- 决定48: 导出格式优先做人类可读、也便于二次处理的 JSON, 并把逐帧矩阵、位置、旋转和基础视频信息一起落盘。
+
+## 状态
+
+**目前在阶段2** - 已确认目标视频来源代码路径, 正在做 `after_refine` 真实轨迹与 `to_refine` sidecar 的最小动态比对。
+
+## [2026-03-28 18:08:00] [Session ID: 945d570e-8f9a-4112-9004-6a0f244a9a65] [记录类型]: `after_refine.mp4` 镜头轨迹导出工具已完成并完成真实导出
+
+## 阶段
+
+- [x] 阶段1: 回读 `colmap_my5` 支线上下文并确认目标视频来源
+- [x] 阶段2: 验证 `after_refine.mp4` 的真实相机来源与现有 sidecar 的关系
+- [x] 阶段3: 实现导出工具并补最小回归测试
+- [x] 阶段4: 对目标视频真实导出并校验落盘结果
+
+## 关键问题
+
+1. `after_refine.mp4` 的真实轨迹是否已经确认:
+   - 已验证事实:
+     - `after_refine.mp4` 共 `41` 帧
+     - 真实导出工具按 `Refiner.test_dataset` 导出后, JSON 也得到 `41` 帧
+     - 自动定位到的 refine 配置是:
+       - `exp_cfg/my5/flux_shinkai_museum_v2_fastgs_my5_nomask_v1_35000_fixsh_rerun.yaml`
+   - 已验证结论:
+     - `after_refine.mp4` 的逐帧轨迹就是 refine 测试集相机, 不是训练期渲染 sidecar 本身
+2. `to_refine/ckpt_34999/refine_c2ws.npy` 能不能直接当成 `after_refine` 轨迹:
+   - 已验证事实:
+     - 两者旋转矩阵逐帧完全一致:
+       - `rotation_matrix_diff_max = 0.0`
+     - 但平移逐帧恒定相差约 `2.5`:
+       - `translation_diff_mean = 2.4999999956190857`
+   - 已验证结论:
+     - 训练期 `to_refine` 轨迹不能直接冒充 `after_refine` 真实轨迹
+     - 它只适合作为对照 sidecar 元数据保留
+3. 工具是否已经真实可用:
+   - 已验证事实:
+     - 新脚本:
+       - `ours/export_refine_video_trajectory.py`
+     - 新测试:
+       - `tests/test_export_refine_video_trajectory.py`
+     - 真实导出结果:
+       - `outputs/my5_colmap_fastgs_stable_35k_dense/flux_shinkai_museum_v2_fastgs_my5_nomask_v1_35000_fixsh_rerun/after_refine_camera_trajectory.json`
+     - JSON 顶层包含:
+       - `video`
+       - `refine`
+       - `frames`
+       - `training_render_sidecar_comparison`
+   - 已验证结论:
+     - 这轮工具已经能直接对真实 `after_refine.mp4` 落地镜头轨迹动画数据文件
+
+## 做出的决定
+
+- 决定49: 这类 refine 视频轨迹导出统一以 `refiner_test_dataset` 为主口径, 不再默认复用 `to_refine/refine_c2ws.npy`。
+- 决定50: 保留 `training_render_sidecar_comparison` 字段, 让后续查看 JSON 时能直接看见训练侧 sidecar 与真实 refine 轨迹的差异证据。
+
+## 状态
+
+**目前已完成** - 导出工具、单测、真实导出和关键差异验证都已完成。
+
+## [2026-03-28 18:18:00] [Session ID: 945d570e-8f9a-4112-9004-6a0f244a9a65] [记录类型]: 补充 Unity 友好版轨迹 sidecar
+
+## 关键问题
+
+1. 用户当前真实需求:
+   - 不只是“找到 JSON”
+   - 而是要把轨迹导入 Unity
+2. 已验证事实:
+   - 原始导出文件确实存在:
+     - `outputs/my5_colmap_fastgs_stable_35k_dense/flux_shinkai_museum_v2_fastgs_my5_nomask_v1_35000_fixsh_rerun/after_refine_camera_trajectory.json`
+   - 同时已补一份 Unity 友好版:
+     - `outputs/my5_colmap_fastgs_stable_35k_dense/flux_shinkai_museum_v2_fastgs_my5_nomask_v1_35000_fixsh_rerun/after_refine_camera_trajectory_unity.json`
+   - Unity 版每帧包含:
+     - `quaternionXyzw`
+     - `cameraToWorldRowMajor`
+     - `cameraToWorldColumnMajor`
+     - `intrinsicsRowMajor`
+3. 当前结论:
+   - 现在用户不需要再自己换四元数顺序或手工拍平矩阵
+   - 直接优先读 Unity 版 sidecar 即可
+
+## 做出的决定
+
+- 决定51: 导出器默认同时写出通用 JSON 和 Unity 友好 JSON。
+- 决定52: Unity 版先保持原始 FreeFix/COLMAP-normalized 坐标系, 不擅自加额外轴变换, 避免把用户已对齐好的几何空间再扭坏。
+
+## 状态
+
+**目前已完成** - 通用版与 Unity 版轨迹 sidecar 都已落盘并验证。

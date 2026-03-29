@@ -2,6 +2,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -9,8 +10,10 @@ from unittest.mock import patch
 from ours.run_fastgs_refine import (
     build_arg_parser,
     build_bridge_command,
+    build_export_command,
     build_refine_command,
     default_bridge_output_path,
+    resolve_refined_artifact_paths,
     run_pipeline,
 )
 
@@ -32,6 +35,23 @@ class RunFastGSRefineTest(unittest.TestCase):
         self.assertEqual(args.colmap_path, Path("/tmp/demo_scene"))
         self.assertEqual(args.ckpt_path, Path("/tmp/demo_fastgs.pth"))
         self.assertEqual(args.refine_backend, "flux")
+
+    def test_parser_accepts_final_ply_output_arg(self) -> None:
+        parser = build_arg_parser()
+        args = parser.parse_args(
+            [
+                "--exp-cfg",
+                "exp_cfg/demo.yaml",
+                "--colmap-path",
+                "/tmp/demo_scene",
+                "--ckpt-path",
+                "/tmp/demo_fastgs.pth",
+                "--final-ply-output",
+                "/tmp/final/demo.ply",
+            ]
+        )
+
+        self.assertEqual(args.final_ply_output, Path("/tmp/final/demo.ply"))
 
     def test_default_bridge_output_path_uses_repo_outputs_dir(self) -> None:
         source_path = Path("/tmp/fastgs/ckpt_30000.pth")
@@ -71,6 +91,48 @@ class RunFastGSRefineTest(unittest.TestCase):
         self.assertEqual(command[:3], [sys.executable, "-m", "ours.refine_by_sdxl"])
         self.assertEqual(command[-1], str(bridge_output))
 
+    def test_build_export_command_targets_export_cli(self) -> None:
+        refined_ckpt = Path("/tmp/outputs/demo/ckpts/ckpt_flux_demo.pt")
+        final_ply = Path("/tmp/outputs/demo/point_cloud_flux_demo.ply")
+
+        command = build_export_command(refined_ckpt, final_ply)
+
+        self.assertEqual(command[:3], [sys.executable, "-m", "recon.export_3dgs_ply"])
+        self.assertEqual(command[-2:], ["--output", str(final_ply)])
+
+    def test_resolve_refined_artifact_paths_prefers_result_dir_from_gs_cfg(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            base_dir = tmp_path / "base"
+            result_dir = tmp_path / "result"
+            base_dir.mkdir()
+            result_dir.mkdir()
+
+            gs_cfg_path = base_dir / "cfg.json"
+            gs_cfg_path.write_text(
+                json.dumps({"result_dir": str(result_dir)}),
+                encoding="utf-8",
+            )
+
+            base_cfg = tmp_path / "base.yaml"
+            exp_cfg = tmp_path / "exp.yaml"
+            base_cfg.write_text(
+                "base_dir: {base_dir}\nexp_name: demo\n".format(base_dir=base_dir.as_posix()),
+                encoding="utf-8",
+            )
+            exp_cfg.write_text("exp_name: flux_demo\n", encoding="utf-8")
+
+            args = SimpleNamespace(
+                base_cfg=base_cfg,
+                exp_cfg=exp_cfg,
+                final_ply_output=None,
+            )
+
+            refined_ckpt, final_ply = resolve_refined_artifact_paths(args)
+
+            self.assertEqual(refined_ckpt, result_dir / "ckpts" / "ckpt_flux_demo.pt")
+            self.assertEqual(final_ply, result_dir / "point_cloud_flux_demo.ply")
+
     def test_run_pipeline_runs_bridge_then_refine(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
@@ -78,6 +140,14 @@ class RunFastGSRefineTest(unittest.TestCase):
             source_path.write_bytes(b"demo")
             scene_path = tmp_path / "scene"
             scene_path.mkdir()
+            base_dir = tmp_path / "base"
+            result_dir = tmp_path / "result"
+            base_dir.mkdir()
+            result_dir.mkdir(parents=True)
+            (base_dir / "cfg.json").write_text(
+                json.dumps({"result_dir": str(result_dir)}),
+                encoding="utf-8",
+            )
 
             args = SimpleNamespace(
                 source=None,
@@ -88,13 +158,19 @@ class RunFastGSRefineTest(unittest.TestCase):
                 base_cfg=tmp_path / "base.yaml",
                 refine_backend="flux",
                 bridge_output=None,
+                final_ply_output=None,
                 data_factor=1,
                 step=None,
                 no_normalize=False,
                 dry_run=False,
             )
-            args.exp_cfg.write_text("demo: true\n", encoding="utf-8")
-            args.base_cfg.write_text("demo: true\n", encoding="utf-8")
+            args.exp_cfg.write_text("exp_name: flux_demo\n", encoding="utf-8")
+            args.base_cfg.write_text(
+                "base_dir: {base_dir}\nexp_name: base_demo\ngs_cfg_file: cfg.json\n".format(
+                    base_dir=base_dir.as_posix()
+                ),
+                encoding="utf-8",
+            )
 
             executed_commands: list[list[str]] = []
             executed_cwds: list[Path] = []
@@ -106,14 +182,16 @@ class RunFastGSRefineTest(unittest.TestCase):
                 return SimpleNamespace(returncode=0)
 
             with patch("ours.run_fastgs_refine.subprocess.run", side_effect=fake_run):
-                bridge_output_path, commands = run_pipeline(args)
+                bridge_output_path, final_ply_output_path, commands = run_pipeline(args)
 
-            self.assertEqual(len(executed_commands), 2)
+            self.assertEqual(len(executed_commands), 3)
             self.assertEqual(executed_commands, commands)
             self.assertTrue(all(Path(cwd) == Path(__file__).resolve().parents[1] for cwd in executed_cwds))
             self.assertIn("recon.import_fastgs", executed_commands[0])
             self.assertEqual(executed_commands[1][:3], [sys.executable, "-m", "ours.refine_by_flux"])
             self.assertEqual(executed_commands[1][-1], str(bridge_output_path))
+            self.assertEqual(executed_commands[2][:3], [sys.executable, "-m", "recon.export_3dgs_ply"])
+            self.assertEqual(final_ply_output_path, result_dir / "point_cloud_flux_demo.ply")
 
     def test_direct_script_execution_can_reach_argparse_help(self) -> None:
         result = subprocess.run(

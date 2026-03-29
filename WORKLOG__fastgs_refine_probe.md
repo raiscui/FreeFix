@@ -95,3 +95,101 @@
 - `hessian_attr` 这个名字很容易让人误会成“参与优化的参数列表”或“冻结列表”, 但当前实现里它更像“certainty 估计的属性来源”
 - 想修结构时, 关键不是把属性“锁住”, 而是让结构相关区域在 guide mask 里被正确识别出来
 - 这类配置解释必须把“生成阶段 mask”与“后续 GS 优化器更新”拆开讲, 不然非常容易反着理解
+
+## [2026-03-28 17:26:01] [Session ID: 019d33ba-5b20-7711-bf05-b3380d192c53] 任务名称: 给 FastGS refine wrapper 补最终 3DGS PLY 导出
+
+### 任务内容
+- 修改 [run_fastgs_refine.py](/root/autodl-tmp/home/rais/FreeFix/ours/run_fastgs_refine.py), 让 wrapper 在 bridge 和 refine 之后再自动导出最终 3DGS `.ply`
+- 修改 [test_run_fastgs_refine.py](/root/autodl-tmp/home/rais/FreeFix/tests/test_run_fastgs_refine.py), 锁定第三步导出命令、结果路径推导和 `--final-ply-output` 参数
+
+### 完成过程
+- 先静态核实 refine 结束后的产物仍停在 `ckpt_<exp_name>.pt`, 现有 wrapper 没有最终导出步骤
+- 再把 wrapper 的命令链扩成三步:
+  - `recon.import_fastgs`
+  - `ours.refine_by_flux|sdxl`
+  - `recon.export_3dgs_ply`
+- 中途发现两个实际坑点:
+  - 不能假设配置里一定显式有 `gs_cfg_file`
+  - 不能为了推导最终路径而让 `--dry-run` 先依赖 `OmegaConf`
+- 所以最终改成:
+  - `gs_cfg_file` 缺失时回退到 `cfg.json`
+  - 只轻量解析 `base_dir / exp_name / gs_cfg_file`
+  - 再读 `cfg.json` 里的 `result_dir` 来确定 refined ckpt 与 `.ply` 默认输出位置
+- 最后跑完:
+  - `py_compile`
+  - wrapper 单测
+  - `--help`
+  - 一条真实 `--dry-run`
+
+### 总结感悟
+- “最终输出”这种需求, 最容易漏在 orchestration 的尾巴上, 因为前两步都能跑时, 人很容易误以为链路已经闭环
+- 如果 wrapper 只是为了读几个路径键就提前依赖重配置库, 那它的 dry-run 价值会被大幅削弱
+- 对这类一条命令脚本, 最值得锁定的不是算法正确性, 而是命令顺序、默认输出路径和 dry-run 可读性
+
+## [2026-03-29 10:53:59] [Session ID: 019d3934-ae28-7011-acaa-2f5fa77d5f39] 任务名称: 探索“随机相机偏移 + Flux 图生图”是否适合作为 refine 分支
+
+### 任务内容
+- 回读当前 FastGS -> FreeFix refine 支线, 确认现有 Flux refine 的真实数据流
+- 判断“从现有相机做随机小偏移, 渲染后交给 Flux 图生图, 再拿去 refine”这条想法在当前架构里的落点
+- 输出适合继续写成 OpenSpec 的方案边界、风险与建议
+
+### 完成过程
+- 先静态核对 [refine_by_flux.py](/root/autodl-tmp/home/rais/FreeFix/ours/refine_by_flux.py) 和 [refiner.py](/root/autodl-tmp/home/rais/FreeFix/recon/refiner.py), 确认当前系统已经是“render -> img2img -> synthetic supervise -> refine”闭环
+- 再核对 [colmap.py](/root/autodl-tmp/home/rais/FreeFix/recon/datasets/colmap.py) 与 [base.yaml](/root/autodl-tmp/home/rais/FreeFix/exp_cfg/base.yaml), 确认相机、内参和 refine 配置的当前契约
+- 最后把方案拆成两条路:
+  - 直接替换现有固定视角链路
+  - 保留现有主链, 额外增加一个受控 synthetic camera 分支
+- 结合当前代码结构, 选择了第二条作为更稳的方向, 并补出主要风险:
+  - pose 偏移过大时的 hallucination 注入
+  - benchmark test split 被训练增强污染
+  - 只动 `c2w` 不动 `K` 的表达边界
+
+### 总结感悟
+- 这条想法不是“能不能接进去”的问题, 而是“应该把它视为 refine 小修, 还是 synthetic novel-view augmentation”这个定义问题
+- 从当前代码看, 它完全有落点, 但第一版一定要把姿态扰动限制在很小范围, 否则 2D 扩散会开始替 3D 几何编故事
+- 这类新分支最需要先守住评测口径, 否则很容易在观感变好的同时, 让 benchmark 失去解释力
+
+## [2026-03-29 10:58:30] [Session ID: 019d3934-ae28-7011-acaa-2f5fa77d5f39] 任务名称: 为 pose jitter refine 手工创建 OpenSpec change
+
+### 任务内容
+- 在当前仓库里创建一条新的 OpenSpec change
+- 将刚刚收敛出来的“受控 pose jitter synthetic refine”方案写成 proposal、design、tasks 和 capability spec
+- 让后续实现可以直接接着这套 artifacts 往下做
+
+### 完成过程
+- 先确认当前仓库还没有 `openspec/` 目录, 本机也缺少 `openspec` CLI
+- 再去参考其他仓库的 OpenSpec change 目录结构, 对齐常见的 spec-driven 骨架
+- 最后手工创建:
+  - [proposal.md](/root/autodl-tmp/home/rais/FreeFix/openspec/changes/add-pose-jitter-refine/proposal.md)
+  - [design.md](/root/autodl-tmp/home/rais/FreeFix/openspec/changes/add-pose-jitter-refine/design.md)
+  - [tasks.md](/root/autodl-tmp/home/rais/FreeFix/openspec/changes/add-pose-jitter-refine/tasks.md)
+  - [spec.md](/root/autodl-tmp/home/rais/FreeFix/openspec/changes/add-pose-jitter-refine/specs/pose-jitter-refine/spec.md)
+- 文档里明确了几个关键边界:
+  - 默认仍保留 fixed refine 主链
+  - pose jitter 必须和 eval split 解耦
+  - 第一版只做小幅 `c2w` 扰动
+  - synthetic 视角必须有安全检查与 fallback
+- 创建完成后, 又回读了一轮所有 artifacts, 确认这套 change 已经到了可继续实现的粒度
+
+### 总结感悟
+- OpenSpec CLI 缺失不该成为阻塞, 只要目录约定清楚, change 仍然可以先落地
+- 这次最值钱的不是“新建了 4 个 md 文件”, 而是把探索阶段的风险边界真正固化成了实现前约束
+- 对这种容易从“局部增广”滑向“hallucination 监督”的能力, 先把 change 写严一点, 后面实现反而更稳
+
+## [2026-03-29 11:19:26] [Session ID: 019d3934-ae28-7011-acaa-2f5fa77d5f39] 任务名称: 按 ff-change 口径确认 pose jitter change 已可进入实现
+
+### 任务内容
+- 按 `openspec-ff-change` 的要求复核 `add-pose-jitter-refine`
+- 确认这条 change 是否已经具备实现前所需的完整工件
+- 给出当前 change 的可执行状态判断
+
+### 完成过程
+- 先回读 [proposal.md](/root/autodl-tmp/home/rais/FreeFix/openspec/changes/add-pose-jitter-refine/proposal.md)、[design.md](/root/autodl-tmp/home/rais/FreeFix/openspec/changes/add-pose-jitter-refine/design.md)、[tasks.md](/root/autodl-tmp/home/rais/FreeFix/openspec/changes/add-pose-jitter-refine/tasks.md) 和 [spec.md](/root/autodl-tmp/home/rais/FreeFix/openspec/changes/add-pose-jitter-refine/specs/pose-jitter-refine/spec.md)
+- 再对照常见 spec-driven OpenSpec 骨架, 确认当前 change 不缺实现前关键 artifacts
+- 最后明确记录:
+  - 这条 change 已经是 apply-ready
+  - 当前唯一缺的是本机 `openspec` CLI, 不是 change 内容本身
+
+### 总结感悟
+- `ff-change` 的本质不是“必须用 CLI 跑过一遍”, 而是“把实现前的工件一次性准备齐”
+- 这条 pose jitter change 现在已经满足这个目标, 后面最自然的下一步就是直接按 `tasks.md` 开始做

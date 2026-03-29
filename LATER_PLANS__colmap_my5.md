@@ -160,3 +160,36 @@
   - 至少锁住:
     - `L=0` 不变
     - 纯 DC-only 场景在旋转前后结果一致
+
+## [2026-03-27 21:19:24] [Session ID: 20260327T194314Z-main] 主题: SH rotation bridge bug 已闭环, 下一步只剩可选收益项
+
+### 当前状态
+- 已完成:
+  - `import_fastgs` 的高阶 SH rotation 修复
+  - 单测
+  - 真实 bridge 重评估
+  - canonical checkpoint 更新
+- 因此下面这个旧待办已经闭环:
+  - `import_fastgs` 需要补高阶 SH rotation
+
+### 待后续处理事项
+- 如果后面继续提高主观观感, 可以考虑基于修复后的 canonical bridge ckpt 再跑一轮新的 refine 对照。
+- 但这已经不是“修 bug 必须做”的部分了, 而是新的质量优化任务。
+
+## [2026-03-27 21:37:03] [Session ID: 20260327T212417Z-main] 主题: 修复后 bridge 的 refine rerun 已完成, 后续只剩轻量调参方向
+
+### 当前状态
+- 已完成:
+  - 基于修复后 canonical bridge checkpoint 的 refine rerun
+  - rerun 的 base + refined 评估
+- 因此下面这个旧待办已经闭环:
+  - “基于修复后的 canonical bridge ckpt 再跑一轮新的 refine 对照”
+
+### 待后续处理事项
+- 如果后面还要继续追主观观感, 优先做小范围 refine 参数搜索:
+  - `strength` 再往下压
+  - `warp_ratio` 再往下压
+  - `refine_steps` 再缩短
+- 重点不是追更高的“修补感”, 而是找:
+  - 主观瑕疵减少
+  - 同时 `LPIPS / PSNR / SSIM` 不继续明显变差

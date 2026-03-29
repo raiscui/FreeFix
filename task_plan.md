@@ -809,3 +809,58 @@
 ## 状态
 
 **支线已启用** - `__colmap_my5` 将用于承接本轮 my5 训练配置、索引验证和训练执行记录。
+
+## [2026-03-28 00:00:00] [Session ID: 113355] [记录类型]: 启用支线上下文 `__colmap_my6`
+
+## 目标
+
+- 参考 `my5` 的 `flux_shinkai_museum_v2_fastgs_my5_nomask_v1_35000_fixsh_rerun` 流程, 使用 `../FastGS/output/my6_nomask_v1/checkpoints/ckpt_35000.pth` 在 FreeFix 中完成 bridge + Flux refine。
+
+## 做出的决定
+
+- 决定14: 为该任务启用支线六文件后缀 `__colmap_my6`, 避免和默认主线以及 `my5` 支线混写。
+- 决定15: 这轮优先复用 `my5` 的 bridge/refine 经验, 先补 `my6` 的最小 FreeFix 契约文件, 再执行真实 refine。
+
+## 状态
+
+**支线已启用** - `__colmap_my6` 将用于承接本轮 my6 FastGS -> FreeFix -> refine 的记录。
+
+## [2026-03-28 11:41:10] [Session ID: 113355] [记录类型]: 支线 __colmap_my6 已完成
+
+## 状态
+
+**支线已完成** - `my6_nomask_v1` 已完成 FreeFix bridge、Flux refine、PLY 导出与 base/refined 双评估, 详细证据见 `task_plan__colmap_my6.md` 与同后缀上下文文件。
+
+## [2026-03-28 15:53:37] [Session ID: 75b3a1b3-0719-49e9-adc0-80fc3ad65971] [记录类型]: 启用支线上下文 `__colmap_my7`
+
+## 目标
+
+- 复用 `my6` 已跑通的 FreeFix bridge + Flux refine 口径。
+- 将 `/home/rais/FastGS/output/my7_nomask_v1/checkpoints/ckpt_35000.pth` 转成 FreeFix bridge checkpoint。
+- 基于 `/home/rais/FastGS/data/my7_colmap_fastgs` 完成 `my7` 的 refine、最终 PLY 导出和结果核对。
+
+## 关键问题
+
+1. 为什么这次单开 `__colmap_my7` 支线:
+   - 当前任务和默认主线无直接关系。
+   - 这次是独立的 `my7` 训练产物桥接与 refine 执行任务, 适合放进独立六文件上下文集中。
+2. 当前已验证的最关键输入事实:
+   - FastGS checkpoint 存在。
+   - 数据目录存在。
+   - FastGS `train/test` 渲染数量是 `283 / 41`。
+   - FreeFix `Parser + Dataset(test_every=8)` 动态验证也是 `283 / 41`。
+
+## 做出的决定
+
+- 决定16: 本轮统一使用后缀 `__colmap_my7`, 避免和 `my6` 记录混写。
+- 决定17: 优先复用 `my6` 的配置骨架和参数口径, 只替换 `data_dir`、`base_dir`、`exp_name` 与 bridge 输出路径。
+
+## 状态
+
+**支线已启用** - `__colmap_my7` 将用于承接本轮 `my7_nomask_v1` 的 bridge、refine、导出与评估记录。
+
+## [2026-03-28 16:22:55] [Session ID: 75b3a1b3-0719-49e9-adc0-80fc3ad65971] [记录类型]: 支线 __colmap_my7 已完成
+
+## 状态
+
+**支线已完成** - `my7_nomask_v1` 已完成 FreeFix bridge、Flux refine、PLY 导出与 base/refined 双评估, 详细证据见 `task_plan__colmap_my7.md` 与同后缀上下文文件。

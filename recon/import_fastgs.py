@@ -220,6 +220,115 @@ def rotmat_to_quat_wxyz(rotmats: torch.Tensor) -> torch.Tensor:
     )
 
 
+def infer_sh_degree(num_bases: int) -> int:
+    # -----------------------------------------------------------------------------
+    # SH 系数是按完整平方数展开的:
+    # - l=0 -> 1
+    # - l<=1 -> 4
+    # - l<=2 -> 9
+    # - l<=3 -> 16
+    # 这里把系数维度还原成 SH 阶数, 后面旋转块矩阵时会用到。
+    # -----------------------------------------------------------------------------
+    side = math.isqrt(num_bases)
+    if side * side != num_bases:
+        raise ValueError(f"SH basis 数量必须是完全平方数, got {num_bases}")
+    return side - 1
+
+
+def eval_real_sh_bases(basis_dim: int, dirs: torch.Tensor) -> torch.Tensor:
+    # -----------------------------------------------------------------------------
+    # 不手写另一套 SH basis 公式, 直接复用 gsplat 当前 renderer 实际使用的实现。
+    # 这样 bridge 时旋转的 basis 和真正渲染时的 basis 保持同一份契约。
+    # -----------------------------------------------------------------------------
+    from gsplat.cuda._torch_impl import _eval_sh_bases_fast
+
+    dirs = dirs / torch.linalg.norm(dirs, dim=-1, keepdim=True).clamp_min(1e-12)
+    return _eval_sh_bases_fast(basis_dim, dirs)
+
+
+def build_real_sh_rotation_matrix(
+    rotation: torch.Tensor,
+    sh_degree: int,
+    sample_count: int = 128,
+) -> torch.Tensor:
+    # -----------------------------------------------------------------------------
+    # 对 real SH 来说, 每个 l 阶都会在自身的 (2l+1) 维子空间里做正交旋转。
+    # 这里不手抄 Wigner-D 闭式公式, 而是用 gsplat 的同一套 SH basis 数值拟合:
+    #   Y_l(R d) = D_l(R) @ Y_l(d)
+    # 再把每一阶的块矩阵拼成总的 block-diagonal 旋转矩阵。
+    #
+    # 这么做的好处是:
+    # - 和当前 renderer 的 basis 顺序完全一致
+    # - 对我们当前只需要支持的 l<=3 已经足够稳定
+    # -----------------------------------------------------------------------------
+    if sh_degree < 0:
+        raise ValueError(f"非法 SH 阶数: {sh_degree}")
+
+    rotation = torch.as_tensor(rotation, dtype=torch.float64)
+    if rotation.shape != (3, 3):
+        raise ValueError(f"rotation 必须是 3x3, got {tuple(rotation.shape)}")
+
+    basis_dim = (sh_degree + 1) ** 2
+    if basis_dim == 0:
+        raise ValueError("basis_dim 不能为 0")
+
+    generator = torch.Generator(device="cpu")
+    generator.manual_seed(0)
+    dirs = torch.randn(sample_count, 3, dtype=torch.float64, generator=generator)
+    dirs = dirs / torch.linalg.norm(dirs, dim=-1, keepdim=True).clamp_min(1e-12)
+
+    # `rotation` 是列向量语义下的主动旋转。
+    # 当前代码里点坐标都是行向量, 因此这里要乘 `rotation.T`。
+    rotated_dirs = dirs @ rotation.T
+
+    bases = eval_real_sh_bases(basis_dim, dirs)
+    rotated_bases = eval_real_sh_bases(basis_dim, rotated_dirs)
+
+    matrix = torch.eye(basis_dim, dtype=torch.float64)
+    for degree in range(1, sh_degree + 1):
+        start = degree * degree
+        end = (degree + 1) * (degree + 1)
+
+        lhs = bases[:, start:end]
+        rhs = rotated_bases[:, start:end]
+
+        # 先最小二乘求出块矩阵, 再用 SVD 拉回最近的正交矩阵。
+        # 这样数值误差不会把本应纯旋转的变换拖成带缩放 / 剪切的矩阵。
+        solution = torch.linalg.lstsq(lhs, rhs).solution
+        block = solution.T
+        u, _, vh = torch.linalg.svd(block)
+        matrix[start:end, start:end] = u @ vh
+
+    return matrix
+
+
+def rotate_real_sh_coefficients(
+    coeffs: torch.Tensor,
+    rotation: torch.Tensor,
+) -> torch.Tensor:
+    # -----------------------------------------------------------------------------
+    # `coeffs` 形状约定:
+    #   [..., K, C]
+    # 其中:
+    # - K 是 SH basis 数量
+    # - C 是颜色通道(通常是 3)
+    #
+    # 对于颜色函数:
+    #   f(d) = Y(d)^T c
+    # 当全局方向坐标被旋转为 `R d` 后, 想保持同一真实外观, 系数必须同步做:
+    #   c' = D(R) c
+    # -----------------------------------------------------------------------------
+    sh_degree = infer_sh_degree(coeffs.shape[-2])
+    if sh_degree == 0:
+        return coeffs.clone()
+
+    rotation_matrix = build_real_sh_rotation_matrix(rotation, sh_degree).to(
+        device=coeffs.device,
+        dtype=coeffs.dtype,
+    )
+    return torch.einsum("ij,...jc->...ic", rotation_matrix, coeffs)
+
+
 def extract_fastgs_checkpoint_splats(path: Path) -> tuple[dict[str, torch.Tensor], int]:
     payload = load_torch_payload(path)
     if not (isinstance(payload, tuple) and len(payload) == 2):
@@ -337,13 +446,20 @@ def transform_splats_to_freefix(
     quats = rotmat_to_quat_wxyz(rotated_rotmats)
     scales = splats["scales"] + log_scale_delta
 
+    # 高阶 SH 不是“纯颜色常数”, 它依赖观察方向。
+    # 当整个场景坐标系被全局旋转后, 这些系数也必须在同一 real-SH basis 下同步旋转。
+    colors = torch.cat([splats["sh0"], splats["shN"]], dim=1)
+    rotated_colors = rotate_real_sh_coefficients(colors, rotation)
+    sh0 = rotated_colors[:, :1, :]
+    shN = rotated_colors[:, 1:, :]
+
     return {
         "means": means.contiguous(),
         "opacities": splats["opacities"].reshape(-1).contiguous(),
         "quats": quats.contiguous(),
         "scales": scales.contiguous(),
-        "sh0": splats["sh0"].contiguous(),
-        "shN": splats["shN"].contiguous(),
+        "sh0": sh0.contiguous(),
+        "shN": shN.contiguous(),
     }
 
 

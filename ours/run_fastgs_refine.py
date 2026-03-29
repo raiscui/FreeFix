@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import shlex
 import subprocess
 import sys
@@ -13,6 +14,7 @@ from pathlib import Path
 # 这个脚本只做 orchestration:
 # 1. 先把 FastGS checkpoint / ply 导入成 FreeFix bridge ckpt
 # 2. 再调用现有的 Flux / SDXL refine 入口
+# 3. 最后把 refined checkpoint 导出成标准 3DGS PLY
 #
 # 设计原则:
 # - 不复制 bridge 逻辑
@@ -75,6 +77,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="bridge ckpt 输出路径。默认写到 outputs/fastgs_bridge/ 下。",
     )
     parser.add_argument(
+        "--final-ply-output",
+        type=Path,
+        default=None,
+        help="最终 refined 3DGS PLY 输出路径。默认写到 refine 结果目录根部。",
+    )
+    parser.add_argument(
         "--data-factor",
         type=int,
         default=1,
@@ -135,6 +143,68 @@ def get_refine_module_name(backend: str) -> str:
     raise ValueError(f"不支持的 refine backend: {backend}")
 
 
+def read_simple_yaml_scalars(path: Path, keys: set[str]) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.split("#", 1)[0].strip()
+        if not line or ":" not in line:
+            continue
+
+        key, raw_value = line.split(":", 1)
+        key = key.strip()
+        if key not in keys:
+            continue
+
+        value = raw_value.strip()
+        if not value:
+            continue
+
+        if (value.startswith('"') and value.endswith('"')) or (
+            value.startswith("'") and value.endswith("'")
+        ):
+            value = value[1:-1]
+        values[key] = value
+    return values
+
+
+def load_runtime_path_contract(args: argparse.Namespace) -> dict[str, str]:
+    # wrapper 只需要拿到少量路径相关键, 没必要为了这个去依赖完整 OmegaConf。
+    # 这样 `python3 ours/run_fastgs_refine.py --dry-run` 也能在轻环境下直接工作。
+    required_keys = {"base_dir", "exp_name", "gs_cfg_file"}
+    merged = read_simple_yaml_scalars(args.base_cfg.expanduser().resolve(), required_keys)
+    merged.update(read_simple_yaml_scalars(args.exp_cfg.expanduser().resolve(), required_keys))
+    return merged
+
+
+def resolve_refined_artifact_paths(args: argparse.Namespace) -> tuple[Path, Path]:
+    runtime_contract = load_runtime_path_contract(args)
+    if "base_dir" not in runtime_contract:
+        raise KeyError("无法从配置里解析 `base_dir`, 需要在 base/exp cfg 里显式提供。")
+    if "exp_name" not in runtime_contract:
+        raise KeyError("无法从配置里解析 `exp_name`, 需要在 base/exp cfg 里显式提供。")
+
+    base_dir = Path(runtime_contract["base_dir"]).expanduser().resolve()
+    gs_cfg_file = runtime_contract.get("gs_cfg_file", "cfg.json")
+    gs_cfg_path = base_dir / gs_cfg_file
+    result_dir = base_dir
+
+    # refine 最终 ckpt 的真实保存位置来自底层 gs 配置里的 `result_dir`。
+    # 这里优先读它, 避免把 `base_dir` 和 `result_dir` 偶然不一致的场景猜错。
+    if gs_cfg_path.exists():
+        with gs_cfg_path.open("r", encoding="utf-8") as file:
+            gs_cfg = json.load(file)
+        result_dir = Path(gs_cfg.get("result_dir", str(base_dir))).expanduser().resolve()
+
+    exp_name = runtime_contract["exp_name"]
+    refined_ckpt_path = result_dir / "ckpts" / f"ckpt_{exp_name}.pt"
+    final_ply_output_path = (
+        args.final_ply_output.expanduser().resolve()
+        if args.final_ply_output is not None
+        else result_dir / f"point_cloud_{exp_name}.ply"
+    )
+    return refined_ckpt_path, final_ply_output_path
+
+
 def build_bridge_command(args: argparse.Namespace, source_path: Path, bridge_output_path: Path) -> list[str]:
     command = [
         sys.executable,
@@ -177,6 +247,18 @@ def build_refine_command(args: argparse.Namespace, bridge_output_path: Path) -> 
     return command
 
 
+def build_export_command(refined_ckpt_path: Path, final_ply_output_path: Path) -> list[str]:
+    return [
+        sys.executable,
+        "-m",
+        "recon.export_3dgs_ply",
+        "--ckpt",
+        str(refined_ckpt_path),
+        "--output",
+        str(final_ply_output_path),
+    ]
+
+
 def print_command(command: list[str]) -> None:
     print(f"+ {shlex.join(command)}")
 
@@ -189,33 +271,36 @@ def run_command(command: list[str]) -> None:
         raise SystemExit(exc.returncode) from exc
 
 
-def run_pipeline(args: argparse.Namespace) -> tuple[Path, list[list[str]]]:
+def run_pipeline(args: argparse.Namespace) -> tuple[Path, Path, list[list[str]]]:
     source_path = resolve_source_arg(args)
     bridge_output_path = (
         args.bridge_output.expanduser().resolve()
         if args.bridge_output is not None
         else default_bridge_output_path(source_path)
     )
+    refined_ckpt_path, final_ply_output_path = resolve_refined_artifact_paths(args)
 
     commands = [
         build_bridge_command(args, source_path, bridge_output_path),
         build_refine_command(args, bridge_output_path),
+        build_export_command(refined_ckpt_path, final_ply_output_path),
     ]
 
     if args.dry_run:
         for command in commands:
             print_command(command)
-        return bridge_output_path, commands
+        return bridge_output_path, final_ply_output_path, commands
 
     for command in commands:
         run_command(command)
-    return bridge_output_path, commands
+    return bridge_output_path, final_ply_output_path, commands
 
 
 def main() -> None:
     args = build_arg_parser().parse_args()
-    bridge_output_path, _ = run_pipeline(args)
+    bridge_output_path, final_ply_output_path, _ = run_pipeline(args)
     print(f"bridge_output: {bridge_output_path}")
+    print(f"final_ply_output: {final_ply_output_path}")
 
 
 if __name__ == "__main__":

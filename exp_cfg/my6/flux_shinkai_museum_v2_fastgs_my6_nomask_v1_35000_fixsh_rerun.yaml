@@ -1,0 +1,33 @@
+# 基于 FastGS `my6_nomask_v1/ckpt_35000.pth` 的专用 Flux refine 配置。
+# 这条线沿用 `my5 fixsh rerun` 的口径, 只替换:
+# - `base_dir`
+# - `exp_name`
+# - 对应的 my6 数据契约
+
+base_dir: outputs/my6_colmap_fastgs_stable_35k_dense
+exp_name: flux_shinkai_museum_v2_fastgs_my6_nomask_v1_35000_fixsh_rerun
+
+refine_start_idx: 0
+refine_end_idx: 41
+
+train_start_idx: 0
+train_end_idx: 283
+
+test_split: test
+test_trans: [0, 0, 0]
+test_rots: [0, 0, 0]
+
+prompt: "high detail. Refine images, repair visual errors and blurriness in AI-generated images, perform defogging and enhance clarity. Correct unreasonable elements, data errors and illogical content in the images, remove ghosting, and boost details, textures and edges."
+
+# 先固定 `my5 fixsh rerun` 里已经验证过的一组参数。
+# 这样这轮差异主要来自场景和 FastGS checkpoint 本身, 而不是又引入新的 refine 变量。
+strength: 0.65
+refine_steps: 400
+warp_ratio: 0.3
+
+hessian_attr: ["means", "quats", "scales"]
+
+data_type: colmap
+load_step: 35000
+
+flux_model_path: /home/rais/.cache/modelscope/hub/models/black-forest-labs/FLUX___1-dev

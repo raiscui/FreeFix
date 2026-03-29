@@ -31,3 +31,37 @@
   - [import_fastgs.py](/home/rais/FreeFix/recon/import_fastgs.py)
   - [refiner.py](/home/rais/FreeFix/recon/refiner.py)
   - [cfg.json](/home/rais/FreeFix/outputs/my4_fullcolmap_quality/cfg.json)
+
+## [2026-03-29 10:53:59] [Session ID: 019d3934-ae28-7011-acaa-2f5fa77d5f39] 主题: 随机 pose 的 Flux refine 一旦越界, 本质上就从“修图”变成“2D 幻觉监督 3D”
+
+### 发现来源
+- 在回读 `ours/refine_by_flux.py`、`recon/refiner.py` 与当前 refine 配置后, 对“随机相机偏移 + 图生图”方案做静态对齐时发现
+
+### 核心问题
+- 当前 refine 的生成图会被直接绑定到相机参数, 再作为监督信号写回高斯
+- 所以如果随机 pose 只是很小扰动, 它像局部增广
+- 但如果偏移过大, Flux 生成的新显露区域没有真实多视图约束, 这些内容也会被当成“应该长成这样”的监督写回 3D
+
+### 为什么重要
+- 这不是单纯的“效果可能不稳定”
+- 它会改变整个模块的语义边界:
+  - 从 refinement
+  - 变成 synthetic novel-view bootstrapping
+- 一旦语义变了, 评测、配置命名、默认参数和风险控制都要跟着变
+
+### 未来风险
+- 如果直接围绕 `test_split=test` 做随机附近采样并训练, benchmark 纯净性会被破坏
+- 如果没有 pose 扰动上限与可见性约束, 细薄结构、遮挡边界、镜面区域会优先出问题
+- 如果后续只看生成图观感, 很容易误把 hallucination 当成 3D 提升
+
+### 当前结论
+- 这条路线值得做, 但第一版必须被定义成“受控的小幅 pose jitter synthetic refine”
+- 需要显式和评测 split 解耦
+- 需要先做最小证伪实验, 不能一上来大范围推广
+
+### 后续讨论入口
+- 下次若继续推进, 先看:
+  - [refine_by_flux.py](/root/autodl-tmp/home/rais/FreeFix/ours/refine_by_flux.py)
+  - [refiner.py](/root/autodl-tmp/home/rais/FreeFix/recon/refiner.py)
+  - [base.yaml](/root/autodl-tmp/home/rais/FreeFix/exp_cfg/base.yaml)
+  - [notes__fastgs_refine_probe.md](/root/autodl-tmp/home/rais/FreeFix/notes__fastgs_refine_probe.md)

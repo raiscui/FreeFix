@@ -1128,3 +1128,287 @@
 - 修完后最小回归验证应该是:
   - raw + raw cameras vs normalized + normalized cameras
   - 二者在 full SH 下重新接近
+
+## [2026-03-27 21:24:17] [Session ID: 20260327T212417Z-main] 笔记: 修复后 bridge refine rerun 的命名与调用口径
+
+## 来源
+
+### 来源1: `ours/refine_by_flux.py`
+
+- 位置:
+  - `ours/refine_by_flux.py`
+- 要点:
+  - refine 输出目录取:
+    - `os.path.join(cfg.base_dir, cfg.exp_name)`
+  - refined checkpoint 保存为:
+    - `base_dir/ckpts/ckpt_<exp_name>.pt`
+  - 因此 rerun 只要换一个新的 `exp_name`, 就不会覆盖旧 refine 结果
+
+### 来源2: `ours/evaluation.py`
+
+- 位置:
+  - `ours/evaluation.py`
+- 要点:
+  - base 评估会优先尊重:
+    - `--ckpt-path`
+  - refined 评估固定读取:
+    - `base_dir/ckpts/ckpt_<exp_name>.pt`
+  - 因此这轮 bridge rerun 的正确口径是:
+    - base 用外部 bridge checkpoint override
+    - refined 用新 exp_name 对应的新 refined checkpoint
+
+## 综合发现
+
+### 当前决定
+
+- 本轮 rerun 新配置文件使用:
+  - `exp_cfg/my5/flux_shinkai_museum_v2_fastgs_my5_nomask_v1_35000_fixsh_rerun.yaml`
+- 新实验名固定为:
+  - `flux_shinkai_museum_v2_fastgs_my5_nomask_v1_35000_fixsh_rerun`
+- base 初始 checkpoint 显式使用:
+  - `data/fastgs_bridge/my5_nomask_v1/ckpt_35000_freefix.pt`
+- 这样可以同时保留:
+  - 旧 bridge refine
+  - 修复后 bridge base-only 评估
+  - 修复后 bridge refine rerun
+
+## [2026-03-27 21:37:03] [Session ID: 20260327T212417Z-main] 笔记: 修复后 bridge refine rerun 的真实评估结果
+
+## 来源
+
+### 来源1: fixsh rerun 评估 JSON
+
+- 位置:
+  - `outputs/my5_colmap_fastgs_stable_35k_dense/flux_shinkai_museum_v2_fastgs_my5_nomask_v1_35000_fixsh_rerun/eval/`
+- 要点:
+  - base `test`:
+    - `PSNR 27.188240097790228`
+    - `SSIM 0.8906744631325326`
+    - `LPIPS 0.2037334242245046`
+  - refined `test`:
+    - `PSNR 26.752713505814715`
+    - `SSIM 0.8825770921823455`
+    - `LPIPS 0.22314650619902263`
+  - base `train`:
+    - `PSNR 27.30250376104887`
+    - `SSIM 0.892769445168256`
+    - `LPIPS 0.20248514247972638`
+  - refined `train`:
+    - `PSNR 26.79426761398046`
+    - `SSIM 0.8837079736453485`
+    - `LPIPS 0.22129560833263734`
+
+### 来源2: 旧 bridge refine 与 FastGS 原始记录
+
+- 位置:
+  - `outputs/.../flux_shinkai_museum_v2_fastgs_my5_nomask_v1_35000/eval/`
+  - `/home/rais/FastGS/output/my5_nomask_v1/results.json`
+- 要点:
+  - 旧 bridge refined `test`:
+    - `PSNR 26.613409786689573`
+    - `SSIM 0.8803512395882025`
+    - `LPIPS 0.22109279745235677`
+  - FastGS 原始 `test`:
+    - `PSNR 27.203941345214844`
+    - `SSIM 0.8910136222839355`
+    - `LPIPS 0.20262764394283295`
+
+## 综合发现
+
+### 已验证结论
+
+- 修复 bridge bug 后, 同参数 refine 仍然会把 GT 指标拉差。
+- 这次 rerun 相对修复后 base 的 `test` 增量是:
+  - `PSNR -0.4355`
+  - `SSIM -0.00810`
+  - `LPIPS +0.01941`
+- 也就是说:
+  - 旧 bridge bug 被修掉以后
+  - refine 不再承担“把错误 bridge artifact 拉回去”的那部分补偿
+  - 剩下来的主要是它对主观观感的修补, 但从 GT 指标看仍然偏过强
+
+### 和旧 bridge refine 的关系
+
+- 新 rerun refine 相对旧 bridge refine 的 `test` 增量是:
+  - `PSNR +0.1393`
+  - `SSIM +0.00223`
+  - `LPIPS +0.00205`
+- 这说明:
+  - 修复 bridge bug 后再 refine, 确实能把 `PSNR / SSIM` 拉回一点
+  - 但它仍然没有超过修复后的 base
+  - 而且 `LPIPS` 还略差一点
+
+### 和 FastGS 原始 base 的关系
+
+- 修复后 bridge base 相对 FastGS 原始 `test`:
+  - `PSNR -0.0157`
+  - `SSIM -0.00034`
+  - `LPIPS +0.00111`
+- 修复后 bridge refine 相对 FastGS 原始 `test`:
+  - `PSNR -0.4512`
+  - `SSIM -0.00844`
+  - `LPIPS +0.02052`
+- 因此更稳的当前口径是:
+  - canonical bridge base 已经几乎追平 FastGS 原始
+  - 当前这组 refine 参数不是“质量继续提升”, 而是“主观修补更强, 量化 fidelity 更弱”
+
+## [2026-03-28 17:55:00] [Session ID: 945d570e-8f9a-4112-9004-6a0f244a9a65] 笔记: `after_refine.mp4` 镜头轨迹导出前的事实对齐
+
+## 来源
+
+### 来源1: `ours/refine_by_flux.py`
+
+- 要点:
+  - `after_refine.mp4` 的写出逻辑是:
+    - 在 `for i in range(cfg.refine_start_idx, cfg.refine_end_idx)` 中调用 `refiner.render(i)`
+    - 把返回的 `rgb` 逐帧写入 `after_refine.mp4`
+  - 这说明视频帧索引与 `Refiner.render(i)` 的输入索引一一对应。
+
+### 来源2: `recon/refiner.py`
+
+- 要点:
+  - `Refiner.render(idx, split="test")` 直接读取 `self.test_dataset[idx]`。
+  - `self.test_dataset` 对 `colmap` 场景使用 `recon.datasets.colmap.Dataset(..., split="test")`。
+  - 默认 `test_trans=[0,0,0]`、`test_rots=[0,0,0]` 时, `cam_param["c2w"]` 就是测试集原始 `camtoworld`。
+
+### 来源3: `recon/trainer.py::render_traj()`
+
+- 要点:
+  - 训练阶段轨迹导出会对每个验证相机做:
+    - `data["camtoworld"] @ trans_mat`
+  - 其中 `trans_mat[:3, 3] = [-2.5, 0, 0]`
+  - 同时会把结果写到:
+    - `to_refine/ckpt_<step>/refine_c2ws.npy`
+  - 因此这条 sidecar 不能在未验证前直接当成 `after_refine.mp4` 的真实镜头轨迹。
+
+### 来源4: 目标目录与视频探测
+
+- 要点:
+  - 目标目录:
+    - `outputs/my5_colmap_fastgs_stable_35k_dense/flux_shinkai_museum_v2_fastgs_my5_nomask_v1_35000_fixsh_rerun`
+  - `after_refine.mp4` 信息:
+    - `41` 帧
+    - `1280x720`
+    - `12 fps`
+  - `to_refine/ckpt_34999/refine_c2ws.npy` 也有 `41` 帧, 但是否与 refine 视频同轨迹仍需动态比对。
+
+## 综合发现
+
+### 现象
+
+- `after_refine.mp4` 与 `to_refine/ckpt_34999/refine_c2ws.npy` 在帧数上重合。
+- 但静态代码已经表明训练轨迹导出带有额外平移, refine 视频路径默认没有这层偏移。
+
+### 当前假设
+
+- 导出工具应以 `Refiner.test_dataset` 的真实测试相机为主数据源。
+- `to_refine/ckpt_34999/refine_c2ws.npy` 只能作为可选 sidecar 对照或 fallback, 不能默认直接复用。
+
+### 下一步最小验证
+
+- 直接实例化与 `fixsh_rerun` 同配置的 `Parser + Dataset`。
+- 取 `test` split 的前 `41` 个 `camtoworld`。
+- 与 `to_refine/ckpt_34999/refine_c2ws.npy` 做逐帧矩阵对比, 确认它们到底是:
+  - 完全一致
+  - 还是只差训练期那个人工平移
+
+## [2026-03-28 18:08:00] [Session ID: 945d570e-8f9a-4112-9004-6a0f244a9a65] 笔记: `after_refine.mp4` 轨迹导出实现与真实验证结果
+
+## 来源
+
+### 来源1: 新增导出脚本 `ours/export_refine_video_trajectory.py`
+
+- 要点:
+  - 输入:
+    - `--video-path`
+    - 可选 `--exp-cfg`
+  - 默认行为:
+    - 按视频目录自动扫描 `exp_cfg/**/*.yaml`
+    - 合并 `exp_cfg/base.yaml`
+    - 回读 `base_dir/cfg.json`
+    - 用 `colmap.Dataset(split=test)` 重建真实逐帧相机
+  - 输出:
+    - `<video_stem>_camera_trajectory.json`
+
+### 来源2: 新增测试 `tests/test_export_refine_video_trajectory.py`
+
+- 要点:
+  - 覆盖:
+    - CLI 参数解析
+    - exp cfg 自动发现
+    - sidecar 差异统计
+    - 默认输出文件名
+    - repo-relative 配置路径回退
+
+### 来源3: 真实导出命令
+
+- 命令:
+  - `/root/autodl-tmp/home/rais/FreeFix/.pixi/envs/default/bin/python -m ours.export_refine_video_trajectory --video-path outputs/my5_colmap_fastgs_stable_35k_dense/flux_shinkai_museum_v2_fastgs_my5_nomask_v1_35000_fixsh_rerun/after_refine.mp4`
+- 关键输出:
+  - `frame_count: 41`
+  - `trajectory_source: refiner_test_dataset`
+  - `sidecar_translation_diff_mean: 2.500000`
+  - `sidecar_rotation_diff_max: 0.000000`
+
+## 综合发现
+
+### 已验证结论
+
+- `after_refine.mp4` 的真实镜头轨迹已经成功导出到:
+  - `outputs/my5_colmap_fastgs_stable_35k_dense/flux_shinkai_museum_v2_fastgs_my5_nomask_v1_35000_fixsh_rerun/after_refine_camera_trajectory.json`
+- JSON 中每帧都包含:
+  - `frame_index`
+  - `time_sec`
+  - `dataset_index`
+  - `parser_index`
+  - `image_name / image_path`
+  - `image_size`
+  - `intrinsics`
+  - `position`
+  - `rotation_matrix`
+  - `quaternion_wxyz`
+  - `camera_to_world`
+- `to_refine/ckpt_34999/refine_c2ws.npy` 与真实 `after_refine` 轨迹不是同一条平移路径。
+  - 它只能作为 sidecar 对照证据。
+
+### 实现口径
+
+- 这次没有去加载 refine checkpoint, 也没有去碰 CUDA 渲染链。
+- 工具只重建“视频实际使用的测试相机序列”, 所以运行轻、验证直接、失败面更小。
+
+## [2026-03-28 18:18:00] [Session ID: 945d570e-8f9a-4112-9004-6a0f244a9a65] 笔记: Unity 友好版轨迹 sidecar 已补齐
+
+## 来源
+
+### 来源1: 导出器二次补强
+
+- 要点:
+  - 原始 JSON 继续保留完整学术/调试口径
+  - 额外生成 Unity 版 JSON:
+    - `after_refine_camera_trajectory_unity.json`
+
+### 来源2: Unity 版字段设计
+
+- 要点:
+  - `quaternionXyzw`
+    - 直接匹配 Unity `Quaternion(x, y, z, w)` 的构造顺序
+  - `cameraToWorldRowMajor`
+    - 方便按行读入
+  - `cameraToWorldColumnMajor`
+    - 方便按列填 `Matrix4x4`
+  - `intrinsicsRowMajor`
+    - 保留相机内参, 便于后面做 FOV 或投影还原
+
+## 综合发现
+
+### 已验证结论
+
+- 现在目标目录里已经同时有:
+  - `after_refine_camera_trajectory.json`
+  - `after_refine_camera_trajectory_unity.json`
+- Unity 版 JSON 明确写了:
+  - `axisConversionApplied: false`
+  - `coordinateSpace: freefix_colmap_normalized`
+- 这意味着:
+  - 如果 Unity 里的几何也在同一空间下, 可以直接使用
+  - 如果用户后面还有额外轴系转换需求, 应该在 Unity 导入层显式做, 不应该在这里偷偷硬编码

@@ -254,3 +254,129 @@
   - 先看 `recon.import_fastgs.py`
   - 再看 `notes__colmap_my5.md`
   - 最后按 `LATER_PLANS__colmap_my5.md` 补回归测试
+
+## [2026-03-27 21:19:24] [Session ID: 20260327T194314Z-main] 主题: 3DGS / FastGS 跨坐标系桥接时, “旋转几何但不旋转高阶 SH” 会制造一种很像 renderer bug 的假象
+
+### 发现来源
+- `my5_nomask_v1` 的 FastGS -> FreeFix bridge 修复
+- 修复前后真实评估对比
+
+### 核心问题
+- 如果只看现象:
+  - bridge base 掉很多
+  - refine 又能拉回很多
+- 很容易误以为:
+  - renderer 不兼容
+  - 相机契约不一致
+  - benchmark 对不上
+- 但这次真正的问题只是:
+  - 高阶 SH 没有跟着全局坐标旋转
+
+### 为什么重要
+- 这类 bug 非常迷惑, 因为:
+  - 几何通常看起来还是“差不多对”
+  - GT 和 split 也可能全都对
+  - 最后却在 view-dependent 外观上整体掉分
+- 如果没有把 `DC-only` 和 full SH 分开做实验, 很容易一直在错误层面上排查
+
+### 未来风险
+- 以后只要继续做:
+  - FastGS / 3DGS / FreeFix 之间的 checkpoint bridge
+  - 并且目标坐标系含有明显全局旋转
+- 如果忘了同步旋转高阶 SH, 就会重复出现同类掉分
+
+### 当前结论
+- 这次 `my5_nomask_v1` 已经证明:
+  - 修复 SH rotation 后, bridge base 从 `23.95` 回到 `27.19`
+  - 已经基本追平 FastGS 原始 `27.20`
+- 因此这条经验可以上升成长期规律:
+  - 方向相关外观参数必须被视为“坐标系相关状态”, 不能只桥接几何不桥接它
+
+### 后续讨论入口
+- 下次再做 checkpoint bridge, 先看:
+  - `ERRORFIX__colmap_my5.md`
+  - `notes__colmap_my5.md`
+  - `recon/import_fastgs.py`
+
+## [2026-03-27 21:37:03] [Session ID: 20260327T212417Z-main] 主题: 修复 bridge bug 后, 当前这组 refine 参数的真实角色更清楚了
+
+### 发现来源
+- 基于修复后 canonical bridge checkpoint 的 refine rerun
+- 同口径的 base + refined 真实评估
+
+### 核心问题
+- 在旧 bridge bug 还存在时, refine 看起来像是在“明显救回质量”。
+- 但 bug 修掉以后再看, 同一组参数其实仍然会把 GT 指标拉差。
+
+### 为什么重要
+- 这说明过去对 refine 收益的感知里, 混进了两层不同的东西:
+  - 补旧 bridge bug 造成的失真
+  - 真正的主观修补 / 风格修正
+- 如果不把这两层拆开, 后面很容易高估这组 refine 参数的泛化价值。
+
+### 未来风险
+- 如果以后继续把这组参数直接套到:
+  - 更干净的 bridge
+  - 更强的 base
+  - 其它外部 checkpoint
+ 可能还会重复出现:
+  - 主观瑕疵少一点
+  - 但 GT fidelity 更差
+
+### 当前结论
+- 已验证事实:
+  - 修复后 base `test`:
+    - `PSNR 27.1882`
+    - `SSIM 0.8907`
+    - `LPIPS 0.2037`
+  - 修复后 refined `test`:
+    - `PSNR 26.7527`
+    - `SSIM 0.8826`
+    - `LPIPS 0.2231`
+- 已验证结论:
+  - 当前这组 refine 参数不再适合作为默认量化主线
+  - 它更像一组“主观修补参数”, 而不是“提高 GT fidelity 的参数”
+
+### 后续讨论入口
+- 如果以后继续做 refine:
+  - 先看 `notes__colmap_my5.md`
+  - 再看 `LATER_PLANS__colmap_my5.md`
+- 下一轮更值得做的是:
+  - 轻量参数搜索
+  - 而不是默认重用这组偏强配置
+
+## [2026-03-28 18:08:00] [Session ID: 945d570e-8f9a-4112-9004-6a0f244a9a65] 主题: `to_refine/refine_c2ws.npy` 不能被默认视为 `after_refine.mp4` 的真实镜头轨迹
+
+### 发现来源
+- `after_refine.mp4` 镜头轨迹导出工具开发
+- 对 `Refiner.test_dataset` 真实轨迹与 `to_refine/ckpt_34999/refine_c2ws.npy` 的逐帧矩阵对比
+
+### 核心问题
+- 这两条轨迹看起来都来自同一批验证视角, 帧数也都是 `41`
+- 但它们不是同一条位移轨迹
+
+### 为什么重要
+- 如果后面有人把 `to_refine/refine_c2ws.npy` 直接拿去解释 `after_refine.mp4`
+- 就会把训练期为 driving/render 引入的那个人工平移, 错当成 refine 视频本身的真实镜头路径
+
+### 未来风险
+- 这类误读会污染:
+  - 动画数据导出
+  - 相机轨迹可视化
+  - 外部 DCC/动画工具链对接
+  - “为什么视频镜头和测试相机位置对不上”的后续排查
+
+### 当前结论
+- 已验证事实:
+  - 两者旋转矩阵逐帧一致:
+    - `rotation_matrix_diff_max = 0.0`
+  - 但平移逐帧恒差约 `2.5`
+- 因此更稳的规则是:
+  - refine 视频轨迹应以 `Refiner.test_dataset` 为准
+  - `to_refine/refine_c2ws.npy` 只能当训练期 sidecar 或对照证据
+
+### 后续讨论入口
+- 先看:
+  - `ours/export_refine_video_trajectory.py`
+  - `notes__colmap_my5.md`
+- 如果以后还要导出别的 refine 视频轨迹, 继续沿用 `refiner_test_dataset` 这条口径

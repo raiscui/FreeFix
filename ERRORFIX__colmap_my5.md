@@ -145,3 +145,76 @@
     - `35000_train.json`
     - `flux_shinkai_museum_v2_fastgs_my5_nomask_v1_35000_test.json`
     - `flux_shinkai_museum_v2_fastgs_my5_nomask_v1_35000_train.json`
+
+## [2026-03-27 21:19:24] [Session ID: 20260327T194314Z-main] 问题: `import_fastgs` 只旋转了几何参数, 没有同步旋转高阶 SH, 导致 bridge base 大幅掉分
+
+### 现象
+- `my5_nomask_v1` 的 FastGS 原始结果大约是:
+  - `PSNR 27.2039`
+  - `SSIM 0.8910`
+  - `LPIPS 0.2026`
+- 但旧 bridge base 只有:
+  - `PSNR 23.9542`
+  - `SSIM 0.8489`
+  - `LPIPS 0.2550`
+- 同时又观察到:
+  - raw checkpoint + raw cameras + FreeFix renderer 可以算到 `PSNR 27.1882`
+  - 说明问题不在 benchmark, 也不在 renderer 本身
+
+### 原因
+- `transform_splats_to_freefix()` 旧逻辑只处理了:
+  - `means`
+  - `quats`
+  - `scales`
+- 却把:
+  - `sh0`
+  - `shN`
+  原样带到了新坐标系里。
+- 对这份 `my5` 场景来说, FreeFix normalization 带有约 `86.79` 度全局旋转。
+- `shN` 是 view-dependent 高阶 SH 系数, 不跟着旋转就会直接破坏外观函数。
+
+### 修复
+- 在 [import_fastgs.py](/root/autodl-tmp/home/rais/FreeFix/recon/import_fastgs.py) 新增 real SH rotation 逻辑:
+  - 基于 `gsplat` 当前实际 basis 数值构造每一阶的旋转块矩阵
+  - 用 `rotate_real_sh_coefficients()` 把 `sh0 + shN` 一起变换到新坐标系
+- 同步新增回归测试:
+  - `DC-only` 不变
+  - full SH 函数在“旋转方向 + 旋转系数”后保持一致
+
+### 验证
+- `python3 -m py_compile recon/import_fastgs.py tests/test_import_fastgs.py`
+- `.pixi/envs/default/bin/python -m unittest tests.test_import_fastgs`
+- 真实 bridge 复验:
+  - 修复后:
+    - `PSNR 27.188240097790228`
+    - `SSIM 0.8906744631325326`
+    - `LPIPS 0.2037334242245046`
+  - 相比修复前:
+    - `PSNR +3.2340`
+    - `SSIM +0.04180`
+    - `LPIPS -0.05130`
+  - 相比 FastGS 原始结果:
+    - `PSNR -0.0157`
+    - `SSIM -0.00034`
+    - `LPIPS +0.00111`
+- 当前结论:
+  - 这次 bridge 掉分 bug 已经实质修复
+
+## [2026-03-27 21:19:24] [Session ID: 20260327T194314Z-main] 问题: 调试脚本里误用系统 `python3`, 导致把环境缺包误看成实现问题
+
+### 现象
+- 在调查 bridge 掉分时, 我有两次直接用系统 `python3` 跑仓库脚本。
+- 结果分别遇到:
+  - `ModuleNotFoundError: No module named 'plyfile'`
+  - `ModuleNotFoundError: No module named 'imageio'`
+
+### 原因
+- 这些脚本依赖的是项目 `.pixi` 环境里的包, 不是系统 Python 环境。
+- 当时失败的是解释器选择, 不是逻辑路径本身。
+
+### 修复
+- 后续同类验证统一切回:
+  - `.pixi/envs/default/bin/python`
+
+### 验证
+- 切回 `.pixi` 后, 同样的检查脚本都能正常执行并产出有效证据。

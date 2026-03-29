@@ -1,0 +1,31 @@
+# 基于已经修复 SH rotation 的 canonical bridge checkpoint 做 rerun。
+# 这里只改独立的 exp_name, 避免覆盖:
+# - 旧 bridge refine 目录
+# - 修复后 bridge base-only 评估目录
+
+base_dir: outputs/my5_colmap_fastgs_stable_35k_dense
+exp_name: flux_shinkai_museum_v2_fastgs_my5_nomask_v1_35000_fixsh_rerun
+
+refine_start_idx: 0
+refine_end_idx: 41
+
+train_start_idx: 0
+train_end_idx: 283
+
+test_split: test
+test_trans: [0, 0, 0]
+test_rots: [0, 0, 0]
+
+prompt: "high detail. Refine images, repair visual errors and blurriness in AI-generated images, perform defogging and enhance clarity. Correct unreasonable elements, data errors and illogical content in the images, remove ghosting, and boost details, textures and edges."
+
+# 这轮先固定旧参数, 只观察 bridge bug 修复后的真实 refine 增益。
+strength: 0.65
+refine_steps: 400
+warp_ratio: 0.3
+
+hessian_attr: ["means", "quats", "scales"]
+
+data_type: colmap
+load_step: 35000
+
+flux_model_path: /home/rais/.cache/modelscope/hub/models/black-forest-labs/FLUX___1-dev

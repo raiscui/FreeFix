@@ -8,8 +8,10 @@ import torch
 from plyfile import PlyData, PlyElement
 
 from recon.import_fastgs import (
+    eval_real_sh_bases,
     extract_fastgs_checkpoint_splats,
     extract_fastgs_ply_splats,
+    rotate_real_sh_coefficients,
     quat_to_rotmat_wxyz,
     resolve_data_dir_arg,
     resolve_source_arg,
@@ -78,6 +80,53 @@ def write_minimal_fastgs_ply(path: Path) -> None:
 
 
 class ImportFastGSTest(unittest.TestCase):
+    def test_rotate_real_sh_coefficients_keeps_dc_only_unchanged(self) -> None:
+        angle = math.pi / 3.0
+        rotation = torch.tensor(
+            [
+                [math.cos(angle), -math.sin(angle), 0.0],
+                [math.sin(angle), math.cos(angle), 0.0],
+                [0.0, 0.0, 1.0],
+            ],
+            dtype=torch.float32,
+        )
+        colors = torch.zeros((2, 16, 3), dtype=torch.float32)
+        colors[:, 0, :] = torch.tensor(
+            [[0.2, -0.4, 0.6], [1.0, 2.0, 3.0]],
+            dtype=torch.float32,
+        )
+
+        rotated = rotate_real_sh_coefficients(colors, rotation)
+
+        self.assertTrue(torch.allclose(rotated, colors, atol=1e-5))
+
+    def test_rotate_real_sh_coefficients_preserves_view_dependent_function(self) -> None:
+        angle = math.pi / 2.0
+        rotation = torch.tensor(
+            [
+                [math.cos(angle), -math.sin(angle), 0.0],
+                [math.sin(angle), math.cos(angle), 0.0],
+                [0.0, 0.0, 1.0],
+            ],
+            dtype=torch.float32,
+        )
+        generator = torch.Generator(device="cpu")
+        generator.manual_seed(0)
+
+        dirs = torch.randn((64, 3), dtype=torch.float32, generator=generator)
+        dirs = dirs / torch.linalg.norm(dirs, dim=-1, keepdim=True).clamp_min(1e-12)
+        rotated_dirs = dirs @ rotation.T
+
+        colors = torch.randn((1, 16, 3), dtype=torch.float32, generator=generator)
+        rotated_colors = rotate_real_sh_coefficients(colors, rotation)
+
+        bases = eval_real_sh_bases(16, dirs)
+        rotated_bases = eval_real_sh_bases(16, rotated_dirs)
+        original_rgb = torch.einsum("mk,nkc->nmc", bases, colors)
+        rotated_rgb = torch.einsum("mk,nkc->nmc", rotated_bases, rotated_colors)
+
+        self.assertTrue(torch.allclose(rotated_rgb, original_rgb, atol=1e-4, rtol=1e-4))
+
     def test_resolve_source_arg_accepts_ckpt_path_alias(self) -> None:
         args = type(
             "Args",
@@ -168,7 +217,7 @@ class ImportFastGSTest(unittest.TestCase):
             "quats": torch.tensor([[1.0, 0.0, 0.0, 0.0]], dtype=torch.float32),
             "scales": torch.tensor([[0.0, 0.0, 0.0]], dtype=torch.float32),
             "sh0": torch.zeros((1, 1, 3), dtype=torch.float32),
-            "shN": torch.zeros((1, 2, 3), dtype=torch.float32),
+            "shN": torch.zeros((1, 3, 3), dtype=torch.float32),
         }
 
         transformed = transform_splats_to_freefix(source, transform)
@@ -190,6 +239,47 @@ class ImportFastGSTest(unittest.TestCase):
         expected_rot = torch.tensor(rotation, dtype=torch.float32).unsqueeze(0)
         actual_rot = quat_to_rotmat_wxyz(transformed["quats"])
         self.assertTrue(torch.allclose(actual_rot, expected_rot, atol=1e-5))
+
+    def test_transform_splats_to_freefix_rotates_high_order_sh_with_geometry(self) -> None:
+        angle = math.pi / 2.0
+        rotation = np.array(
+            [
+                [math.cos(angle), -math.sin(angle), 0.0],
+                [math.sin(angle), math.cos(angle), 0.0],
+                [0.0, 0.0, 1.0],
+            ],
+            dtype=np.float32,
+        )
+        transform = np.eye(4, dtype=np.float32)
+        transform[:3, :3] = rotation
+
+        generator = torch.Generator(device="cpu")
+        generator.manual_seed(1)
+        source = {
+            "means": torch.tensor([[1.0, 0.0, 0.0]], dtype=torch.float32),
+            "opacities": torch.tensor([-1.0], dtype=torch.float32),
+            "quats": torch.tensor([[1.0, 0.0, 0.0, 0.0]], dtype=torch.float32),
+            "scales": torch.tensor([[0.0, 0.0, 0.0]], dtype=torch.float32),
+            "sh0": torch.randn((1, 1, 3), dtype=torch.float32, generator=generator),
+            "shN": torch.randn((1, 15, 3), dtype=torch.float32, generator=generator),
+        }
+
+        transformed = transform_splats_to_freefix(source, transform)
+
+        dirs = torch.randn((64, 3), dtype=torch.float32, generator=generator)
+        dirs = dirs / torch.linalg.norm(dirs, dim=-1, keepdim=True).clamp_min(1e-12)
+        rotated_dirs = dirs @ torch.tensor(rotation, dtype=torch.float32).T
+
+        original_colors = torch.cat([source["sh0"], source["shN"]], dim=1)
+        transformed_colors = torch.cat([transformed["sh0"], transformed["shN"]], dim=1)
+        bases = eval_real_sh_bases(16, dirs)
+        rotated_bases = eval_real_sh_bases(16, rotated_dirs)
+        original_rgb = torch.einsum("mk,nkc->nmc", bases, original_colors)
+        transformed_rgb = torch.einsum("mk,nkc->nmc", rotated_bases, transformed_colors)
+
+        self.assertTrue(
+            torch.allclose(transformed_rgb, original_rgb, atol=1e-4, rtol=1e-4)
+        )
 
 
 if __name__ == "__main__":
