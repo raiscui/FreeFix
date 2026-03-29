@@ -3,6 +3,16 @@ gs_cfg_file: "cfg.json"
 test_split: test_right
 test_trans: [ 0, 0, 0 ] # meters
 test_rots: [ 0, 0, 0 ] # degrees
+refine_pipeline_offload_mode: none # none 保持旧行为; model_cpu / sequential_cpu 用于大模型 refine 卡在 pipe.to(cuda) 时的绕行路径
+refine_camera_mode: fixed # fixed 保持现有视角; pose_jitter 只在中间 synthetic supervise 渲染阶段做小幅位姿扰动
+refine_camera_source_split: train # pose_jitter 围绕哪组真实相机采样。默认不要直接复用 benchmark eval split
+pose_jitter_trans_sigma: [ 0.02, 0.02, 0.02 ] # meters, 相机局部 xyz 平移高斯采样标准差
+pose_jitter_trans_max: [ 0.05, 0.05, 0.05 ] # meters, 平移硬上限, 超过后会被裁剪
+pose_jitter_rot_sigma_deg: [ 1.5, 1.5, 1.5 ] # degrees, 相机局部 xyz 欧拉角高斯采样标准差
+pose_jitter_rot_max_deg: [ 4.0, 4.0, 4.0 ] # degrees, 旋转硬上限, 超过后会被裁剪
+pose_jitter_max_attempts: 4 # 连续采样失败时最多重试次数, 用完后回退到 base camera
+pose_jitter_alpha_threshold: 0.05 # 计算 alpha 有效覆盖率时的像素阈值
+pose_jitter_min_alpha_coverage: 0.05 # synthetic 视角最低有效覆盖率, 不满足就触发重采样或 fallback
 hessian_attr: [ "means" ] # [ "means", "quats", "scales" ]
 c_exp_index: [ 0.001, 0.01, 0.1 ]
 c_scheduler: [ 0.3, 0.9, 1.0 ]

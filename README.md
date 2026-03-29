@@ -138,6 +138,19 @@ python -m ours.refine_by_flux --exp_cfg exp_cfg/mipnerf/flux_bicycle_v2.yaml
 - You can find and customize configuration files in the `exp_cfg/` directory.
 - Other refinement methods are also available (e.g., `ours/refine_by_sdxl.py`).
 
+**Pose jitter quick start:**
+- In `exp_cfg/base.yaml` or your experiment yaml, set `refine_camera_mode: pose_jitter`.
+- Recommended first-pass values:
+  - `refine_camera_source_split: train`
+  - `pose_jitter_trans_sigma: [0.02, 0.02, 0.02]`
+  - `pose_jitter_trans_max: [0.05, 0.05, 0.05]`
+  - `pose_jitter_rot_sigma_deg: [1.5, 1.5, 1.5]`
+  - `pose_jitter_rot_max_deg: [4.0, 4.0, 4.0]`
+- Keep `before_refine` / `after_refine` as fixed-view renders for comparison.
+- Do not use benchmark eval cameras as the default pose-jitter source unless you explicitly want to change the evaluation semantics.
+- Each run writes `refine/pose_jitter_log.jsonl`, which records sampling attempts, alpha-coverage filtering, and fallback decisions.
+- If Flux or SDXL refine appears to stall around pipeline placement, try `refine_pipeline_offload_mode: model_cpu` before assuming the pose-jitter path is broken.
+
 ## 3. Evaluation
 
 Evaluate the quantitative results (PSNR, SSIM, LPIPS) of both the reconstructed and refined models.

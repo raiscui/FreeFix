@@ -2,7 +2,7 @@ import json
 import argparse
 import os
 import time
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import torch
 from torch import Tensor
@@ -14,8 +14,14 @@ from recon import nerfview
 import viser
 import tqdm
 import numpy as np
-import roma
 
+from recon.pose_jitter import (
+    build_local_camera_transform,
+    coerce_pose_jitter_triplet,
+    sample_bounded_pose_jitter,
+    select_pose_jitter_candidate,
+)
+from recon.refine_runtime import resolve_strategy_resume_step, resolve_strategy_step
 from recon.trainer import Config, soft_sigmoid
 from recon.runtime_env import bootstrap_pixi_cuda_env
 
@@ -25,6 +31,7 @@ from gsplat.rendering import rasterization
 from gsplat.strategy import DefaultStrategy
 from einops import reduce
 from ours.utils import neighbor_L1_loss
+
 
 class Refiner:
     def __init__(
@@ -39,6 +46,14 @@ class Refiner:
         hessian_attr=["mean"],
         test_len=10,
         data_type="colmap",
+        refine_camera_source_split: str = "train",
+        pose_jitter_trans_sigma: Optional[Sequence[float] | float] = None,
+        pose_jitter_trans_max: Optional[Sequence[float] | float] = None,
+        pose_jitter_rot_sigma_deg: Optional[Sequence[float] | float] = None,
+        pose_jitter_rot_max_deg: Optional[Sequence[float] | float] = None,
+        pose_jitter_max_attempts: int = 4,
+        pose_jitter_alpha_threshold: float = 0.05,
+        pose_jitter_min_alpha_coverage: float = 0.05,
     ):
         self.cfg = cfg
         self.device = "cuda"
@@ -77,6 +92,31 @@ class Refiner:
         self.c_exp_index = c_exp_index
         self.test_trans = test_trans
         self.test_rots = test_rots
+        self.test_split = test_split
+        self.refine_camera_source_split = refine_camera_source_split
+        self.pose_jitter_trans_sigma = coerce_pose_jitter_triplet(
+            pose_jitter_trans_sigma,
+            name="pose_jitter_trans_sigma",
+            default=0.0,
+        )
+        self.pose_jitter_trans_max = coerce_pose_jitter_triplet(
+            pose_jitter_trans_max,
+            name="pose_jitter_trans_max",
+            default=0.0,
+        )
+        self.pose_jitter_rot_sigma_deg = coerce_pose_jitter_triplet(
+            pose_jitter_rot_sigma_deg,
+            name="pose_jitter_rot_sigma_deg",
+            default=0.0,
+        )
+        self.pose_jitter_rot_max_deg = coerce_pose_jitter_triplet(
+            pose_jitter_rot_max_deg,
+            name="pose_jitter_rot_max_deg",
+            default=0.0,
+        )
+        self.pose_jitter_max_attempts = max(1, int(pose_jitter_max_attempts))
+        self.pose_jitter_alpha_threshold = float(np.clip(pose_jitter_alpha_threshold, 0.0, 1.0))
+        self.pose_jitter_min_alpha_coverage = float(np.clip(pose_jitter_min_alpha_coverage, 0.0, 1.0))
 
         self.total_step = 0
 
@@ -93,7 +133,17 @@ class Refiner:
             payload = torch.load(ckpt_path, map_location=self.device)
         if "splats" not in payload:
             raise KeyError(f"checkpoint 缺少 splats 字段: {ckpt_path}")
+        payload_step = payload.get("step") if isinstance(payload, dict) else None
         self.splats = torch.nn.ParameterDict(payload["splats"])
+        # ------------------------------------------------------------------
+        # refine 不是从零训练。
+        # 这里必须沿用已加载 checkpoint 的训练步数, 否则 strategy 会把成熟模型
+        # 当成 step=0 的新模型处理, 直接命中 opacity reset。
+        # ------------------------------------------------------------------
+        self.strategy_resume_step = resolve_strategy_resume_step(
+            payload_step=payload_step,
+            load_step=load_step,
+        )
 
         affines = {}
         for i in range(test_len):
@@ -312,38 +362,148 @@ class Refiner:
             radius_clip=3.0,  # skip GSs that have small image radius (in pixels)
         )  # [1, H, W, 3]
         return render_colors[0].cpu().numpy(), render_alphas.squeeze().cpu().numpy()
-    
-    def render(self, idx, split="test", eval=False, trans=True):
-        device = self.device
-        if split == "test":
-            data = self.test_dataset[idx]
-        elif split == "train":
-            data = self.train_dataset[idx]
-        else:
-            raise ValueError
-        if trans:
-            mat = torch.eye(4)
-            mat[:3, :3] = roma.euler_to_rotmat('xyz', torch.tensor(self.test_rots).float(), degrees=True)
-            mat[:3, 3] = torch.tensor(self.test_trans).float()
-            c2w = data["camtoworld"].float() @ mat
-        else:
-            c2w = data["camtoworld"].float()
-        c2w = c2w[None, ...].to(device)
-        Ks = data["K"][None, ...].to(device)
+
+    def _resolve_render_dataset(self, split: str):
+        """把外部 split 名称映射到 refine 当前持有的数据集对象。"""
+        if split == "train":
+            return self.train_dataset, "train"
+        if split in ("test", self.test_split):
+            return self.test_dataset, split
+        raise ValueError(f"不支持的 refine 相机来源 split: {split}")
+
+    def _load_render_sample(
+        self,
+        idx: int,
+        *,
+        split: str = "test",
+        trans: bool = True,
+    ):
+        """读取指定 split 的一帧, 并按需叠加全局 test transform。"""
+        dataset, split_kind = self._resolve_render_dataset(split)
+        data = dataset[idx]
+        c2w = data["camtoworld"].float()
+
+        # 只有 test 路径才沿用旧配置里的全局 view transform。
+        # train 作为 synthetic source 时默认保持原始相机不动, 避免语义混淆。
+        if trans and split_kind != "train":
+            c2w = c2w @ build_local_camera_transform(
+                self.test_trans,
+                self.test_rots,
+                device=c2w.device,
+                dtype=c2w.dtype,
+            )
+
+        K = data["K"].float()
         height, width = data["image"].shape[:2]
-        colors, multi_certainties, alphas, depths = self.rasterize_splats_w_certainty(
-            camtoworlds=c2w,
-            Ks=Ks,
+        return data, c2w, K, height, width, split_kind
+
+    def _render_camera_view(
+        self,
+        c2w: Tensor,
+        K: Tensor,
+        *,
+        width: int,
+        height: int,
+    ):
+        """给定显式相机参数, 渲染 refine 需要的颜色 / certainty / alpha / depth。"""
+        return self.rasterize_splats_w_certainty(
+            camtoworlds=c2w[None, ...].to(self.device),
+            Ks=K[None, ...].to(self.device),
             width=width,
             height=height,
         )
+
+    def render(
+        self,
+        idx,
+        split="test",
+        eval=False,
+        trans=True,
+        camera_mode: str = "fixed",
+        camera_source_split: Optional[str] = None,
+    ):
+        device = self.device
+
+        if camera_mode == "fixed":
+            data, c2w, K, height, width, split_kind = self._load_render_sample(
+                idx,
+                split=split,
+                trans=trans,
+            )
+            colors, multi_certainties, alphas, depths = self._render_camera_view(
+                c2w,
+                K,
+                width=width,
+                height=height,
+            )
+            sample_log = {
+                "camera_mode": "fixed",
+                "used_fallback": False,
+                "source_split": split_kind,
+                "source_index": int(idx),
+            }
+        elif camera_mode == "pose_jitter":
+            source_split = camera_source_split or self.refine_camera_source_split
+            data, base_c2w, K, height, width, split_kind = self._load_render_sample(
+                idx,
+                split=source_split,
+                trans=trans,
+            )
+
+            # 先围绕 base camera 采样多个局部扰动候选。
+            # 只有通过 alpha 覆盖率检查的候选, 才允许继续进入 synthetic supervise。
+            def build_candidate():
+                sampled_trans, sampled_rots = sample_bounded_pose_jitter(
+                    self.pose_jitter_trans_sigma,
+                    self.pose_jitter_trans_max,
+                    self.pose_jitter_rot_sigma_deg,
+                    self.pose_jitter_rot_max_deg,
+                )
+                jittered_c2w = base_c2w @ build_local_camera_transform(
+                    sampled_trans,
+                    sampled_rots,
+                    device=base_c2w.device,
+                    dtype=base_c2w.dtype,
+                )
+                return jittered_c2w, {
+                    "pose_jitter_trans": list(sampled_trans),
+                    "pose_jitter_rots": list(sampled_rots),
+                }
+
+            def render_candidate(candidate_c2w: Tensor):
+                return self._render_camera_view(
+                    candidate_c2w,
+                    K,
+                    width=width,
+                    height=height,
+                )
+
+            c2w, render_result, sample_log = select_pose_jitter_candidate(
+                base_c2w=base_c2w,
+                build_candidate_fn=build_candidate,
+                render_candidate_fn=render_candidate,
+                alpha_threshold=self.pose_jitter_alpha_threshold,
+                min_alpha_coverage=self.pose_jitter_min_alpha_coverage,
+                max_attempts=self.pose_jitter_max_attempts,
+            )
+            colors, multi_certainties, alphas, depths = render_result
+            sample_log["source_split"] = split_kind
+            sample_log["source_index"] = int(idx)
+        else:
+            raise ValueError(f"不支持的 refine 相机模式: {camera_mode}")
+
         cam_param = {
-            "c2w": c2w[0],
-            "K": Ks[0],
+            "c2w": c2w.to(device),
+            "K": K.to(device),
+            "camera_mode": camera_mode,
+            "source_split": sample_log["source_split"],
+            "source_index": sample_log["source_index"],
+            "source_image_name": data.get("image_name"),
+            "sample_log": sample_log,
         }
 
         eval_results = None
-        if eval:
+        if eval and camera_mode == "fixed":
             psnr = self.psnr(colors, data["image"].to(device) / 255.0).item()
             ssim = self.ssim(colors.permute(2,0,1)[None, ...], data["image"].permute(2,0,1)[None, ...].to(device) / 255.0).item()
             lpips = self.lpips(colors.permute(2,0,1)[None, ...], data["image"].permute(2,0,1)[None, ...].to(device) / 255.0).item()
@@ -376,6 +536,15 @@ class Refiner:
         densification = True
         pbar = tqdm.tqdm(range(init_step, max_steps))
         for step in pbar:
+            # ------------------------------------------------------------------
+            # `step` 只表示这次 refine 的局部步数, 负责控制 train/refine 采样节奏。
+            # strategy 则必须继续沿用原训练时间轴, 避免成熟 checkpoint 在 step=0
+            # 被误触发 `reset_opa()`。
+            # ------------------------------------------------------------------
+            strategy_step = resolve_strategy_step(
+                strategy_resume_step=self.strategy_resume_step,
+                local_step=step,
+            )
 
             if step<=max_steps*1/3:
                 is_refine_step = step % 3 == 1
@@ -435,7 +604,7 @@ class Refiner:
                     params=self.splats,
                     optimizers=self.optimizers,
                     state=self.strategy_state,
-                    step=step,
+                    step=strategy_step,
                     info=info,
                 )
 
@@ -460,7 +629,7 @@ class Refiner:
                     params=self.splats,
                     optimizers=self.optimizers,
                     state=self.strategy_state,
-                    step=step,
+                    step=strategy_step,
                     info=info,
                 )
 

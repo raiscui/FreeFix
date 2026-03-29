@@ -193,3 +193,145 @@
 ### 总结感悟
 - `ff-change` 的本质不是“必须用 CLI 跑过一遍”, 而是“把实现前的工件一次性准备齐”
 - 这条 pose jitter change 现在已经满足这个目标, 后面最自然的下一步就是直接按 `tasks.md` 开始做
+
+## [2026-03-29 11:45:09] [Session ID: codex-add-pose-jitter-apply] 任务名称: 落地 pose jitter refine 主链与轻量验证
+
+### 任务内容
+- 新增 [pose_jitter.py](/root/autodl-tmp/home/rais/FreeFix/recon/pose_jitter.py), 把 pose jitter 的纯采样 / fallback helper 从重依赖 `refiner.py` 中解耦
+- 修改 [refiner.py](/root/autodl-tmp/home/rais/FreeFix/recon/refiner.py), 接通 `fixed | pose_jitter` 相机模式、source split 选择、alpha 覆盖率过滤、fallback 与 `sample_log`
+- 修改 [refine_by_flux.py](/root/autodl-tmp/home/rais/FreeFix/ours/refine_by_flux.py) 与 [refine_by_sdxl.py](/root/autodl-tmp/home/rais/FreeFix/ours/refine_by_sdxl.py), 让 synthetic supervise 真正吃到 pose jitter 相机, 并落 `pose_jitter_log.jsonl`
+- 修改 [base.yaml](/root/autodl-tmp/home/rais/FreeFix/exp_cfg/base.yaml) 与 [README.md](/root/autodl-tmp/home/rais/FreeFix/README.md), 补默认配置、小扰动起步值和 benchmark 风险说明
+- 新增 [test_pose_jitter_refine.py](/root/autodl-tmp/home/rais/FreeFix/tests/test_pose_jitter_refine.py), 锁定采样边界、fallback 行为和日志落盘格式
+- 回写 [tasks.md](/root/autodl-tmp/home/rais/FreeFix/openspec/changes/add-pose-jitter-refine/tasks.md), 勾掉已有动态证据支撑的任务
+
+### 完成过程
+- 先复核 `recon/refiner.py` 已落下的 pose jitter 补丁, 确认主逻辑已经覆盖:
+  - base camera 选择
+  - bounded jitter 采样
+  - alpha coverage 过滤
+  - fallback 到 base camera
+- 接着发现一个测试层面的真实问题:
+  - `recon.refiner` 顶层导入太重, 不适合直接作为 helper 单测入口
+- 所以先做了一次“改良而不是叠补丁”的拆分:
+  - 把 pose jitter 纯函数抽成轻模块
+  - 让运行时代码继续复用
+  - 单测直接针对轻模块
+- 然后把 Flux / SDXL refine 的中间 synthetic 渲染循环切到配置驱动的 `camera_mode`
+- 同时补了一层 jsonl 日志, 把每轮采样、过滤和 fallback 证据留到输出目录
+- 最后完成验证:
+  - `py_compile` 通过
+  - `unittest` 12 项通过
+  - 两个 `--help` 都能快速返回
+  - 真实 Flux smoke 已尝试, 但本轮只推进到初始化阶段, 未进入主循环
+
+### 总结感悟
+- 这次最关键的不是“让 pose jitter 能采样”, 而是把它从一个 `refiner.py` 里的局部补丁, 变成真正能穿过 render -> img2img -> refine 的完整链路
+- 对这种重依赖模块, helper 和主流程拆层非常值钱。否则你以为自己在测采样边界, 实际上是在赌整条渲染栈的导入时序
+- 真实模型 smoke 的口径一定要干净: 已尝试不等于已跑通, 没进入主循环就不能把 `4.2` 勾掉
+
+## [2026-03-29 12:17:05] [Session ID: codex-add-pose-jitter-smoke] 任务名称: 继续定位真实 pose jitter smoke 的运行时阻塞边界
+
+### 任务内容
+- 继续执行 `add-pose-jitter-refine` 剩余的 OpenSpec `4.2`
+- 对真实 `python3 -m ours.refine_by_flux --exp_cfg /tmp/pose_jitter_smoke.yaml` 做系统化分段观测
+- 修改 [refine_by_flux.py](/root/autodl-tmp/home/rais/FreeFix/ours/refine_by_flux.py) 与 [refine_by_sdxl.py](/root/autodl-tmp/home/rais/FreeFix/ours/refine_by_sdxl.py), 新增最小阶段日志, 打开长冷启动的黑盒
+
+### 完成过程
+- 先用分段探针验证冷启动的真实耗时分布:
+  - `import torch` 约 `45s`
+  - `torchvision` 和 pipeline / refiner 相关导入累计把冷启动拉到约 `100s`
+- 然后在 refine 入口补上阶段日志:
+  - 运行时依赖加载开始/结束
+  - `Refiner` 初始化开始/结束
+  - `FluxPipeline.from_pretrained` 前后
+  - `pipe.to(cuda)` 前后
+  - scheduler 替换前后
+- 再按模块方式重跑真实 smoke, 先确认它已经能越过:
+  - 运行时依赖加载
+  - `Refiner` 初始化
+  - `FluxPipeline.from_pretrained`
+- 最后把阻塞点收敛到:
+  - `pipe.to(cuda)`
+  - 并确认在 `420s` 时间窗口内它仍未返回
+
+### 总结感悟
+- 这次最有价值的不是“又等了一轮 timeout”, 而是把阻塞点从模糊的“初始化阶段”压缩成了一个非常具体的边界
+- 对超大模型 refine 流程, 阶段日志不是锦上添花, 而是基本可观测性
+- 现在我们已经知道 `4.2` 为什么还不能勾: 不是 pose jitter 主链先炸了, 而是真实 Flux 冷启动在 `pipe.to(cuda)` 这一步超出了当前 smoke 窗口
+
+## [2026-03-29 12:40:28] [Session ID: 019d3934-ae28-7011-acaa-2f5fa77d5f39] 任务名称: 用 offload 绕过 `pipe.to(cuda)` 阻塞, 完成 pose jitter 真实 smoke
+
+### 任务内容
+- 新增 [refine_pipeline_runtime.py](/root/autodl-tmp/home/rais/FreeFix/ours/refine_pipeline_runtime.py), 统一管理 Flux / SDXL refine 的 pipeline 放置策略
+- 修改 [refine_by_flux.py](/root/autodl-tmp/home/rais/FreeFix/ours/refine_by_flux.py) 与 [refine_by_sdxl.py](/root/autodl-tmp/home/rais/FreeFix/ours/refine_by_sdxl.py), 支持 `refine_pipeline_offload_mode`
+- 修改 [base.yaml](/root/autodl-tmp/home/rais/FreeFix/exp_cfg/base.yaml) 与 [README.md](/root/autodl-tmp/home/rais/FreeFix/README.md), 补默认配置和运行提示
+- 新增 [test_refine_pipeline_runtime.py](/root/autodl-tmp/home/rais/FreeFix/tests/test_refine_pipeline_runtime.py), 锁定 `none | model_cpu | sequential_cpu` 三种放置语义
+- 回写 [tasks.md](/root/autodl-tmp/home/rais/FreeFix/openspec/changes/add-pose-jitter-refine/tasks.md), 勾掉最后的 `4.2`
+
+### 完成过程
+- 先复核本地 pipeline 代码, 确认真正的设备语义在 `_execution_device`, 不是 `pipe.device`
+- 再把默认 `pipe.to(cuda)` 与可选 offload hook 收成一个共享 helper
+- 然后补了 19 项轻量单测 / 行为测试, 确保新配置不会把原来的 CLI 和 pose jitter helper 打坏
+- 最后用 `/tmp/pose_jitter_smoke_model_cpu.yaml` 发起真实 Flux smoke:
+  - 越过了旧的 `pipe.to(cuda)` 阻塞点
+  - 成功创建输出目录
+  - 成功写出 `pose_jitter_log.jsonl`
+  - 成功跑完 1 帧并退出码 `0`
+
+### 总结感悟
+- 对 diffusers 这类大模型 pipeline, offload 不只是“省显存开关”, 它还会改变“应该把输入送到哪”的设备语义
+- 这次真正有效的改法不是硬叠更多超时日志, 而是把“放置策略”和“执行设备”从一开始就分开表达
+- 有了这条绕行路径后, pose jitter 主链终于拿到了真实 smoke 证据, OpenSpec change 也才能干净收尾
+
+## [2026-03-29 14:00:17] [Session ID: 019d3934-ae28-7011-acaa-2f5fa77d5f39] 任务名称: 用 `my5` 真实验证 `pose_jitter + train source split`
+
+### 任务内容
+- 基于 `/tmp/my5_pose_jitter_train_smoke_20260329.yaml` 跑 `my5` 的 Flux pose jitter smoke
+- 验证 `refine_camera_mode: pose_jitter` 和 `refine_camera_source_split: train` 的真实数据流
+- 收集 `pose_jitter_log.jsonl`、render/gen 输出和最终 refined ckpt 作为动态证据
+
+### 完成过程
+- 先确认 `my5_colmap_fastgs_stable_35k_dense` 的 `cfg.json` 与 `ckpt_34999.pt` 都还在
+- 再按用户说明排除“上轮误删除”的干扰, 不改代码直接重跑真实命令
+- 运行完成后, 直接核对:
+  - `refine/render/*.jpg`
+  - `refine/gen/image_*.jpg`
+  - `refine/pose_jitter_log.jsonl`
+  - `ckpts/ckpt_my5_pose_jitter_train_smoke_20260329.pt`
+- 最后确认日志里连续 3 帧都来自:
+  - `source_split: train`
+  - `source_index: 0 / 1 / 2`
+
+### 总结感悟
+- 这轮最值钱的不是“又跑了一次 smoke”, 而是把用户脑子里的目标语义和代码当前真实行为对上了
+- `pose_jitter_log.jsonl` 很关键, 它把“到底围绕谁在抖动”从感觉变成了证据
+- 当用户明确说明外部误操作存在时, 及时回滚上一轮失败口径, 比死守错误诊断更重要
+
+## [2026-03-29 14:50:28] [Session ID: 019d3934-ae28-7011-acaa-2f5fa77d5f39] 任务名称: 修复 mature checkpoint refine 第一步误重置 opacity 导致的黑帧
+
+### 任务内容
+- 修改 [recon/refiner.py](/root/autodl-tmp/home/rais/FreeFix/recon/refiner.py), 让 strategy callback 使用 checkpoint 恢复步数而不是从 `0` 重新计数
+- 新增 [recon/refine_runtime.py](/root/autodl-tmp/home/rais/FreeFix/recon/refine_runtime.py), 收拢 refine strategy 的 resume-step 计算
+- 新增 [test_refine_runtime.py](/root/autodl-tmp/home/rais/FreeFix/tests/test_refine_runtime.py), 锁定 payload step / load step / local step 的时间轴映射
+- 复跑真实 `my5 pose_jitter + train` smoke, 验证黑帧不再出现
+
+### 完成过程
+- 先用离线重渲染推翻了“pose_jitter 位姿语义先错”的旧假设
+- 再用最小动态实验证明:
+  - 黑化发生在第一个 refine step 之后
+  - 即使只跑真实 train step, 也会立刻黑掉
+- 然后继续剥离:
+  - 关掉 `use_affine` 无法解决
+  - 把 Flux 图换成自渲染图也无法解决
+  - 只有把 `DefaultStrategy` callback 静音, 黑化才立刻消失
+- 最后直接读取 `gsplat` 源码, 确认:
+  - `step % reset_every == 0` 会触发 `reset_opa`
+  - 当前 `Refiner` 恰好从 `step=0` 开始
+- 修复后又补了两层验证:
+  - 单步最小复现不再黑化
+  - `my5_pose_jitter_train_smoke_fix_20260329` 真实复跑 3 帧成功, `render / gen / after_refine` 全部保持正常亮度
+
+### 总结感悟
+- 这次最危险的误导是“黑图出现在 pose_jitter 输出里, 就以为一定是 pose_jitter 的锅”
+- 对加载成熟 checkpoint 的继续训练流程, 任何和“step”有关的第三方 strategy 都必须先确认恢复语义
+- 如果一个流程会在 `step=0` 做 destructive reset, 那么从 checkpoint 恢复时绝不能直接复用局部步数当全局训练步数
