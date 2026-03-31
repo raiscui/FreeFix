@@ -60,6 +60,16 @@ class RunFastGSRefineTest(unittest.TestCase):
         self.assertEqual(output_path.name, "ckpt_30000_freefix.pt")
         self.assertIn("outputs/fastgs_bridge", output_path.as_posix())
 
+    def test_default_bridge_output_path_uses_parent_for_fastdropgs_checkpoint(self) -> None:
+        source_path = Path("/tmp/fast-dropgs/my8_input_50k_from45k_resetopt/chkpnt50000.pth")
+        output_path = default_bridge_output_path(source_path)
+
+        self.assertEqual(
+            output_path.name,
+            "my8_input_50k_from45k_resetopt_chkpnt50000_freefix.pt",
+        )
+        self.assertIn("outputs/fastgs_bridge", output_path.as_posix())
+
     def test_build_bridge_command_uses_ply_alias_for_ply_source(self) -> None:
         args = SimpleNamespace(
             colmap_path=Path("/tmp/scene"),
@@ -202,7 +212,7 @@ class RunFastGSRefineTest(unittest.TestCase):
             cwd=Path(__file__).resolve().parents[1],
         )
         self.assertEqual(result.returncode, 0, msg=result.stderr)
-        self.assertIn("FastGS 导入并启动 FreeFix refine", result.stdout)
+        self.assertIn("FastGS / fast-dropgs 导入并启动 FreeFix refine", result.stdout)
 
 
 if __name__ == "__main__":

@@ -138,6 +138,33 @@ python -m ours.refine_by_flux --exp_cfg exp_cfg/mipnerf/flux_bicycle_v2.yaml
 - You can find and customize configuration files in the `exp_cfg/` directory.
 - Other refinement methods are also available (e.g., `ours/refine_by_sdxl.py`).
 
+### External checkpoint bridge -> refine
+
+If you already have a compatible 3DGS checkpoint from FastGS or fast-dropgs, you can bridge it into FreeFix and continue with the existing refine pipeline in one command:
+
+```bash
+python ours/run_fastgs_refine.py \
+  --ckpt-path /path/to/ckpt_30000.pth \
+  --colmap-path /path/to/colmap_scene \
+  --exp-cfg exp_cfg/<scene>/flux_<scene>.yaml
+```
+
+The same entrypoint also accepts fast-dropgs checkpoints such as:
+
+```bash
+python ours/run_fastgs_refine.py \
+  --ckpt-path /path/to/chkpnt50000.pth \
+  --colmap-path /path/to/colmap_scene \
+  --exp-cfg exp_cfg/<scene>/flux_<scene>.yaml
+```
+
+Notes:
+
+- `--colmap-path` must match the scene that the checkpoint was trained on.
+- `--exp-cfg` must point to a FreeFix refine config whose `base_dir` and runtime contract match the target scene.
+- If the upstream checkpoint name is very generic, such as `chkpnt50000.pth`, prefer setting `--bridge-output` explicitly when you want a stable custom output path.
+- Use `--dry-run` first if you want to inspect the bridge / refine / export commands before launching a real run.
+
 **Pose jitter quick start:**
 - In `exp_cfg/base.yaml` or your experiment yaml, set `refine_camera_mode: pose_jitter`.
 - Recommended first-pass values:
@@ -146,9 +173,21 @@ python -m ours.refine_by_flux --exp_cfg exp_cfg/mipnerf/flux_bicycle_v2.yaml
   - `pose_jitter_trans_max: [0.05, 0.05, 0.05]`
   - `pose_jitter_rot_sigma_deg: [1.5, 1.5, 1.5]`
   - `pose_jitter_rot_max_deg: [4.0, 4.0, 4.0]`
-- Keep `before_refine` / `after_refine` as fixed-view renders for comparison.
-- Do not use benchmark eval cameras as the default pose-jitter source unless you explicitly want to change the evaluation semantics.
+- `before_refine` / `after_refine` stay on the fixed comparison views from `refine_start_idx` to `refine_end_idx`.
+- If you want every source camera to branch into multiple synthetic views, set `pose_jitter_views_per_source`.
+- If you want pose jitter to draw from multiple named splits, use:
+  - `refine_camera_source_splits: [train, test]`
+  - `refine_train_splits: [train, test]`
+- Example: if `train + test` gives `324` source cameras and `pose_jitter_views_per_source: 3`, the synthetic supervise plan becomes `972` views.
+- Leaving `refine_train_splits` / `refine_camera_source_splits` unset keeps the old range-based behavior.
+- Do not include benchmark eval cameras unless you explicitly accept that the refine run will change the evaluation semantics.
 - Each run writes `refine/pose_jitter_log.jsonl`, which records sampling attempts, alpha-coverage filtering, and fallback decisions.
+- Each run also writes `refine_resume_state.json` and keeps a rolling resume checkpoint at `ckpts/ckpt_<exp_name>__resume_latest.pt`, so interrupted refine runs can resume instead of starting from scratch.
+- `before_refine` / `after_refine` now use batched fixed-view RGB rasterization controlled by `refine_fixed_render_batch_size`, rather than writing those comparison videos one camera at a time.
+- Resume behavior is controlled by:
+  - `refine_resume_enabled`
+  - `refine_resume_save_every_plans`
+  - `refine_fixed_render_batch_size`
 - If Flux or SDXL refine appears to stall around pipeline placement, try `refine_pipeline_offload_mode: model_cpu` before assuming the pose-jitter path is broken.
 
 ## 3. Evaluation

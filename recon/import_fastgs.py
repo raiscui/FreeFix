@@ -19,9 +19,10 @@ from recon.datasets.colmap import Parser as ColmapParser
 # 这个脚本把 FastGS 的训练产物转换成 FreeFix 能直接读取的 checkpoint。
 # 目标是尽量复用现有两套格式, 不额外发明第三套中间协议。
 #
-# 当前支持两类输入:
+# 当前支持三类用户视角下的输入:
 # 1. FastGS `checkpoints/ckpt_*.pth`
-# 2. FastGS `point_cloud/iteration_*/point_cloud.ply`
+# 2. fast-dropgs `chkpnt*.pth`
+# 3. FastGS / 3DGS `point_cloud/iteration_*/point_cloud.ply`
 #
 # 重要前提:
 # - 这个桥接默认面向 FreeFix 的 `app_opt=false` 训练 / refine 线。
@@ -34,26 +35,26 @@ from recon.datasets.colmap import Parser as ColmapParser
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="把 FastGS checkpoint 或 point_cloud.ply 转成 FreeFix checkpoint。"
+        description="把 FastGS / fast-dropgs checkpoint 或 point_cloud.ply 转成 FreeFix checkpoint。"
     )
     source_group = parser.add_mutually_exclusive_group(required=False)
     source_group.add_argument(
         "--source",
         type=Path,
         default=None,
-        help="FastGS 输入文件, 支持 ckpt_*.pth 或 point_cloud.ply。",
+        help="FastGS / fast-dropgs 输入文件, 支持 ckpt_*.pth、chkpnt*.pth 或 point_cloud.ply。",
     )
     source_group.add_argument(
         "--ckpt-path",
         type=Path,
         default=None,
-        help="FastGS checkpoint 路径。是 `--source` 的直观别名。",
+        help="FastGS / fast-dropgs checkpoint 路径。是 `--source` 的直观别名。",
     )
     source_group.add_argument(
         "--ply-path",
         type=Path,
         default=None,
-        help="FastGS point_cloud.ply 路径。是 `--source` 的直观别名。",
+        help="FastGS / 3DGS point_cloud.ply 路径。是 `--source` 的直观别名。",
     )
     parser.add_argument(
         "--data-dir",
@@ -131,6 +132,9 @@ def infer_step_from_path(path: Path) -> int:
         match = re.search(r"ckpt_(\d+)", candidate)
         if match is not None:
             return int(match.group(1))
+        match = re.search(r"chkpnt(\d+)", candidate)
+        if match is not None:
+            return int(match.group(1))
         match = re.search(r"iteration_(\d+)", candidate)
         if match is not None:
             return int(match.group(1))
@@ -142,10 +146,30 @@ def infer_step_from_path(path: Path) -> int:
         match = re.search(r"ckpt_(\d+)", candidate)
         if match is not None:
             return int(match.group(1))
+        match = re.search(r"chkpnt(\d+)", candidate)
+        if match is not None:
+            return int(match.group(1))
         match = re.search(r"iteration_(\d+)", candidate)
         if match is not None:
             return int(match.group(1))
     return 0
+
+
+def infer_checkpoint_source_format(path: Path) -> str:
+    # -----------------------------------------------------------------------------
+    # `fast-dropgs` 和当前 FastGS 的 checkpoint tuple 结构是同型的。
+    # 这里区分的不是“能不能解析”, 而是“来源语义该怎么记”。
+    #
+    # 当前采用两层显式证据:
+    # 1. 路径里直接出现 `fast-dropgs`
+    # 2. 文件名符合上游真实保存格式 `chkpnt{iter}.pth`
+    # -----------------------------------------------------------------------------
+    lower_parts = [part.lower() for part in path.parts]
+    if "fast-dropgs" in lower_parts:
+        return "fastdropgs_checkpoint"
+    if re.fullmatch(r"chkpnt\d+", path.stem.lower()) is not None:
+        return "fastdropgs_checkpoint"
+    return "fastgs_checkpoint"
 
 
 def clone_float_tensor(value: torch.Tensor) -> torch.Tensor:
@@ -332,11 +356,11 @@ def rotate_real_sh_coefficients(
 def extract_fastgs_checkpoint_splats(path: Path) -> tuple[dict[str, torch.Tensor], int]:
     payload = load_torch_payload(path)
     if not (isinstance(payload, tuple) and len(payload) == 2):
-        raise TypeError(f"不是预期的 FastGS checkpoint 结构: {path}")
+        raise TypeError(f"不是预期的 FastGS / fast-dropgs checkpoint 结构: {path}")
 
     model_args, iteration = payload
     if not (isinstance(model_args, tuple) and len(model_args) >= 7):
-        raise TypeError(f"FastGS checkpoint model_args 结构异常: {path}")
+        raise TypeError(f"FastGS / fast-dropgs checkpoint model_args 结构异常: {path}")
 
     splats = {
         "means": clone_float_tensor(model_args[1]),
@@ -390,11 +414,11 @@ def load_fastgs_source(path: Path) -> tuple[dict[str, torch.Tensor], int, str]:
     suffix = path.suffix.lower()
     if suffix == ".pth":
         splats, step = extract_fastgs_checkpoint_splats(path)
-        return splats, step, "fastgs_checkpoint"
+        return splats, step, infer_checkpoint_source_format(path)
     if suffix == ".ply":
         splats, step = extract_fastgs_ply_splats(path)
         return splats, step, "fastgs_ply"
-    raise ValueError(f"暂不支持的 FastGS 输入格式: {path}")
+    raise ValueError(f"暂不支持的 FastGS / fast-dropgs 输入格式: {path}")
 
 
 def resolve_colmap_transform(data_dir: Path, factor: int) -> np.ndarray:
@@ -463,8 +487,22 @@ def transform_splats_to_freefix(
     }
 
 
-def default_output_path(source: Path) -> Path:
-    return source.with_name(f"{source.stem}_freefix.pt")
+def build_default_output_label(source: Path, source_format: str) -> str:
+    # -----------------------------------------------------------------------------
+    # 对 `chkpnt50000.pth` 这类过于通用的名字, 默认输出要带上父目录上下文,
+    # 否则不同 run 很容易写出一堆同名 `_freefix.pt`。
+    # -----------------------------------------------------------------------------
+    stem = source.stem
+    if source_format == "fastdropgs_checkpoint" and re.fullmatch(r"chkpnt\d+", stem.lower()):
+        parent_name = source.parent.name
+        if parent_name:
+            return f"{parent_name}_{stem}"
+    return stem
+
+
+def default_output_path(source: Path, source_format: str) -> Path:
+    label = build_default_output_label(source, source_format)
+    return source.with_name(f"{label}_freefix.pt")
 
 
 def save_freefix_checkpoint(
@@ -492,7 +530,7 @@ def main() -> None:
     args = parse_args()
     source_path = args.source.expanduser().resolve()
     if not source_path.exists():
-        raise FileNotFoundError(f"FastGS 输入不存在: {source_path}")
+        raise FileNotFoundError(f"FastGS / fast-dropgs 输入不存在: {source_path}")
 
     splats, inferred_step, source_format = load_fastgs_source(source_path)
     step = inferred_step if args.step is None else args.step
@@ -507,7 +545,11 @@ def main() -> None:
             for key, value in splats.items()
         }
 
-    output_path = default_output_path(source_path) if args.output is None else args.output.expanduser()
+    output_path = (
+        default_output_path(source_path, source_format)
+        if args.output is None
+        else args.output.expanduser()
+    )
     save_freefix_checkpoint(
         output_path=output_path,
         splats=splats,

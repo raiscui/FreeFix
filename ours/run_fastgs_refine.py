@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shlex
 import subprocess
 import sys
@@ -9,10 +10,10 @@ from pathlib import Path
 
 
 # =============================================================================
-# FastGS -> FreeFix refine 一条命令入口
+# FastGS / fast-dropgs -> FreeFix refine 一条命令入口
 # -----------------------------------------------------------------------------
 # 这个脚本只做 orchestration:
-# 1. 先把 FastGS checkpoint / ply 导入成 FreeFix bridge ckpt
+# 1. 先把 FastGS / fast-dropgs checkpoint / ply 导入成 FreeFix bridge ckpt
 # 2. 再调用现有的 Flux / SDXL refine 入口
 # 3. 最后把 refined checkpoint 导出成标准 3DGS PLY
 #
@@ -25,26 +26,26 @@ from pathlib import Path
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="一条命令完成 FastGS 导入并启动 FreeFix refine。"
+        description="一条命令完成 FastGS / fast-dropgs 导入并启动 FreeFix refine。"
     )
     source_group = parser.add_mutually_exclusive_group(required=False)
     source_group.add_argument(
         "--source",
         type=Path,
         default=None,
-        help="FastGS 输入文件, 支持 ckpt_*.pth 或 point_cloud.ply。",
+        help="FastGS / fast-dropgs 输入文件, 支持 ckpt_*.pth、chkpnt*.pth 或 point_cloud.ply。",
     )
     source_group.add_argument(
         "--ckpt-path",
         type=Path,
         default=None,
-        help="FastGS checkpoint 路径。是 `--source` 的直观别名。",
+        help="FastGS / fast-dropgs checkpoint 路径。是 `--source` 的直观别名。",
     )
     source_group.add_argument(
         "--ply-path",
         type=Path,
         default=None,
-        help="FastGS point_cloud.ply 路径。是 `--source` 的直观别名。",
+        help="FastGS / 3DGS point_cloud.ply 路径。是 `--source` 的直观别名。",
     )
     parser.add_argument(
         "--colmap-path",
@@ -74,7 +75,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--bridge-output",
         type=Path,
         default=None,
-        help="bridge ckpt 输出路径。默认写到 outputs/fastgs_bridge/ 下。",
+        help="bridge ckpt 输出路径。默认写到 outputs/fastgs_bridge/ 下; 对 `chkpnt*.pth` 会自动带上父目录名防止撞名。",
     )
     parser.add_argument(
         "--final-ply-output",
@@ -119,15 +120,25 @@ def repo_root() -> Path:
 
 
 def choose_bridge_label(source_path: Path) -> str:
+    stem = source_path.stem
+
+    # `chkpnt50000.pth` 是 fast-dropgs 的真实上游命名, 单看 stem 太容易重名。
+    # 默认把父目录也带进输出标签, 让不同 run 的 bridge 结果更容易区分。
+    if re.fullmatch(r"chkpnt\d+", stem.lower()) is not None:
+        parent_name = source_path.parent.name
+        if parent_name:
+            return f"{parent_name}_{stem}"
+        return stem
+
     # `ckpt_30000.pth` 这种文件名本身已经足够表达来源。
-    if source_path.stem != "point_cloud":
-        return source_path.stem
+    if stem != "point_cloud":
+        return stem
 
     # `point_cloud.ply` 太通用, 默认带上迭代目录避免不同 run 混淆。
     parent_name = source_path.parent.name
     if parent_name:
-        return f"{parent_name}_{source_path.stem}"
-    return source_path.stem
+        return f"{parent_name}_{stem}"
+    return stem
 
 
 def default_bridge_output_path(source_path: Path) -> Path:

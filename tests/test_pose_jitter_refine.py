@@ -137,18 +137,24 @@ class PoseJitterLoggingTest(unittest.TestCase):
                 log_path,
                 frame_index=3,
                 cam_param={
+                    "plan_index": 3,
                     "camera_mode": "pose_jitter",
                     "source_split": "train",
                     "source_index": 3,
+                    "source_repeat_index": 2,
                     "source_image_name": "0003.png",
+                    "image_id": "gen_3",
                     "sample_log": {"used_fallback": False, "attempt_count": 1},
                 },
             )
 
             record = json.loads(log_path.read_text(encoding="utf-8").strip())
             self.assertEqual(record["frame_index"], 3)
+            self.assertEqual(record["plan_index"], 3)
             self.assertEqual(record["source_split"], "train")
+            self.assertEqual(record["source_repeat_index"], 2)
             self.assertEqual(record["source_image_name"], "0003.png")
+            self.assertEqual(record["image_id"], "gen_3")
             self.assertFalse(record["sample_log"]["used_fallback"])
 
     def test_sdxl_pose_jitter_log_is_jsonl_appendable(self) -> None:
@@ -158,17 +164,23 @@ class PoseJitterLoggingTest(unittest.TestCase):
                 log_path,
                 frame_index=8,
                 cam_param={
+                    "plan_index": 8,
                     "camera_mode": "pose_jitter",
                     "source_split": "train",
                     "source_index": 8,
+                    "source_repeat_index": 1,
                     "source_image_name": "0008.png",
+                    "image_id": "gen_8",
                     "sample_log": {"used_fallback": True, "attempt_count": 4},
                 },
             )
 
             record = json.loads(log_path.read_text(encoding="utf-8").strip())
             self.assertEqual(record["frame_index"], 8)
+            self.assertEqual(record["plan_index"], 8)
             self.assertEqual(record["source_index"], 8)
+            self.assertEqual(record["source_repeat_index"], 1)
+            self.assertEqual(record["image_id"], "gen_8")
             self.assertTrue(record["sample_log"]["used_fallback"])
 
 

@@ -69,7 +69,14 @@ def apply_runtime_path_overrides(cfg, config, include_ckpt_override=True) -> str
     return None
 
 
-def eval(cfg, load_step, eval_test=False, test_from_train=False, use_ckpt_override=False):
+def eval(
+    cfg,
+    load_step,
+    eval_test=False,
+    test_from_train=False,
+    use_ckpt_override=False,
+    resume_load_step=None,
+):
 
     with open(os.path.join(cfg.base_dir, cfg.gs_cfg_file), "r") as f:
         config = Config(**json.load(f))
@@ -81,6 +88,7 @@ def eval(cfg, load_step, eval_test=False, test_from_train=False, use_ckpt_overri
     refiner = Refiner(
         config, 
         load_step=load_step,
+        resume_load_step=resume_load_step,
         test_split=cfg.test_split, 
         test_trans=cfg.test_trans, 
         test_rots=cfg.test_rots, 
@@ -179,12 +187,26 @@ if __name__ == "__main__":
         cfg.load_ckpt_path = args.ckpt_path
 
     base_load_step = resolve_base_load_step(cfg, args.load_step)
-    eval(cfg, base_load_step, args.eval_test, args.test_from_train, use_ckpt_override=True)
+    eval(
+        cfg,
+        base_load_step,
+        args.eval_test,
+        args.test_from_train,
+        use_ckpt_override=True,
+        resume_load_step=base_load_step,
+    )
 
     if args.skip_refined:
         print("Skip refined evaluation because --skip-refined was provided.")
     elif has_refined_checkpoint(cfg):
-        eval(cfg, cfg.exp_name, args.eval_test, args.test_from_train, use_ckpt_override=False)
+        eval(
+            cfg,
+            cfg.exp_name,
+            args.eval_test,
+            args.test_from_train,
+            use_ckpt_override=False,
+            resume_load_step=base_load_step,
+        )
     else:
         print(
             "Skip refined evaluation because checkpoint does not exist: "

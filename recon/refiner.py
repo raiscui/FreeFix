@@ -39,6 +39,7 @@ class Refiner:
         cfg: Config, 
         load_step=29999, 
         load_ckpt_path: Optional[str] = None,
+        resume_load_step: Optional[int | str] = None,
         test_split="test",
         test_trans=[0, 0, 0],
         test_rots=[0, 0, 0],
@@ -81,7 +82,7 @@ class Refiner:
         )
         self.test_dataset = Dataset(
             self.parser,
-            split=test_split,
+            split="test",
             patch_size=cfg.patch_size,
             load_depths=cfg.depth_loss,
             partition_file=cfg.partition
@@ -118,8 +119,6 @@ class Refiner:
         self.pose_jitter_alpha_threshold = float(np.clip(pose_jitter_alpha_threshold, 0.0, 1.0))
         self.pose_jitter_min_alpha_coverage = float(np.clip(pose_jitter_min_alpha_coverage, 0.0, 1.0))
 
-        self.total_step = 0
-
         # Load the refine dataset
         # self.refine_dataset = Refine_Dataset(os.path.join(cfg.result_dir, "to_refine"))
 
@@ -135,6 +134,7 @@ class Refiner:
             raise KeyError(f"checkpoint 缺少 splats 字段: {ckpt_path}")
         payload_step = payload.get("step") if isinstance(payload, dict) else None
         self.splats = torch.nn.ParameterDict(payload["splats"])
+        self.total_step = int(payload.get("total_step", 0)) if isinstance(payload, dict) else 0
         # ------------------------------------------------------------------
         # refine 不是从零训练。
         # 这里必须沿用已加载 checkpoint 的训练步数, 否则 strategy 会把成熟模型
@@ -143,11 +143,21 @@ class Refiner:
         self.strategy_resume_step = resolve_strategy_resume_step(
             payload_step=payload_step,
             load_step=load_step,
+            fallback_load_step=resume_load_step,
         )
 
         affines = {}
+        payload_affines = payload.get("affines") if isinstance(payload, dict) else None
+        if isinstance(payload_affines, dict):
+            for image_id, affine_value in payload_affines.items():
+                affines[str(image_id)] = torch.nn.Parameter(
+                    affine_value.detach().to(self.device).clone()
+                )
         for i in range(test_len):
-            affines[f"gen_{i}"] = torch.nn.Parameter(torch.eye(4)[:3, :].to(self.device)) # 3x4
+            image_id = f"gen_{i}"
+            if image_id in affines:
+                continue
+            affines[image_id] = torch.nn.Parameter(torch.eye(4)[:3, :].to(self.device)) # 3x4
         self.affines = torch.nn.ParameterDict(affines)
 
         # init the optimizers
@@ -218,6 +228,19 @@ class Refiner:
             f"gen_{i}": torch.optim.Adam([{"params": self.affines[f"gen_{i}"], "lr": 1e-2}])
             for i in range(len(self.affines))
         }
+
+    def _ensure_affine_slot(self, image_id: str) -> Tensor:
+        """按需补齐 synthetic 图像的 affine 参数槽位。
+
+        旧实现会按 `test_len` 预创建一批 `gen_i`。
+        但现在 source plan 可能远大于旧的 fixed-view 数量, 所以需要懒创建。
+        """
+        if image_id not in self.affines:
+            self.affines[image_id] = torch.nn.Parameter(torch.eye(4, device=self.device)[:3, :])
+            self.affine_optimizers[image_id] = torch.optim.Adam(
+                [{"params": self.affines[image_id], "lr": 1e-2}]
+            )
+        return self.affines[image_id]
 
     def add_splats(self, new_splats):
         for name, add_params in new_splats.items():
@@ -363,19 +386,39 @@ class Refiner:
         )  # [1, H, W, 3]
         return render_colors[0].cpu().numpy(), render_alphas.squeeze().cpu().numpy()
 
-    def _resolve_render_dataset(self, split: str):
+    def _resolve_render_dataset(self, split: Optional[str]):
         """把外部 split 名称映射到 refine 当前持有的数据集对象。"""
-        if split == "train":
+        target_split = self.test_split if split is None else split
+
+        if target_split == "train":
             return self.train_dataset, "train"
-        if split in ("test", self.test_split):
-            return self.test_dataset, split
-        raise ValueError(f"不支持的 refine 相机来源 split: {split}")
+        if target_split == "test":
+            return self.test_dataset, "test"
+
+        # ------------------------------------------------------------------
+        # 历史配置里 `test_split` 有时会写成项目自定义别名。
+        # 这里继续把它兼容成 canonical test dataset, 避免旧配置直接失效。
+        # ------------------------------------------------------------------
+        if target_split == self.test_split:
+            return self.test_dataset, "test"
+
+        raise ValueError(f"不支持的 refine 相机来源 split: {target_split}")
+
+    def get_dataset_length(self, split: Optional[str]) -> int:
+        """返回指定 split 的样本数量, 供上层构造 view plan。"""
+        dataset, _ = self._resolve_render_dataset(split)
+        return len(dataset)
+
+    def get_dataset_item(self, idx: int, *, split: Optional[str]) -> Dict:
+        """读取指定 split 的原始样本, 供真实训练池构造复用。"""
+        dataset, _ = self._resolve_render_dataset(split)
+        return dataset[idx]
 
     def _load_render_sample(
         self,
         idx: int,
         *,
-        split: str = "test",
+        split: Optional[str] = None,
         trans: bool = True,
     ):
         """读取指定 split 的一帧, 并按需叠加全局 test transform。"""
@@ -413,21 +456,143 @@ class Refiner:
             height=height,
         )
 
+    @torch.no_grad()
+    def render_fixed_rgb(
+        self,
+        idx: int,
+        *,
+        split: Optional[str] = None,
+        trans: bool = True,
+    ) -> dict:
+        """轻量渲染固定视角 RGB。
+
+        这个路径不会计算 certainty / depth 的 Hessian 近似。
+        适合 `before_refine` / `after_refine` 这种只为导出对比图的阶段。
+        """
+        data, c2w, K, height, width, split_kind = self._load_render_sample(
+            int(idx),
+            split=split,
+            trans=trans,
+        )
+        renders, _, _ = self.rasterize_splats(
+            camtoworlds=c2w[None, ...].to(self.device),
+            Ks=K[None, ...].to(self.device),
+            width=width,
+            height=height,
+            sh_degree=self.cfg.sh_degree,
+            near_plane=self.cfg.near_plane,
+            far_plane=self.cfg.far_plane,
+            render_mode="RGB",
+        )
+        return {
+            "index": int(idx),
+            "data": data,
+            "split_kind": split_kind,
+            "rgb": renders[0].clip(0, 1).detach(),
+        }
+
+    @torch.no_grad()
+    def render_fixed_rgb_batch(
+        self,
+        indices: Sequence[int],
+        *,
+        split: Optional[str] = None,
+        trans: bool = True,
+    ) -> list[dict]:
+        """批量渲染多个固定视角 RGB。
+
+        `rasterize_splats` 原生支持 batched cameras。
+        因此固定视角导出更适合走“单次 batch rasterize”, 而不是 Python 线程并发。
+        """
+        normalized_indices = [int(idx) for idx in indices]
+        if not normalized_indices:
+            return []
+
+        samples = []
+        for idx in normalized_indices:
+            data, c2w, K, height, width, split_kind = self._load_render_sample(
+                idx,
+                split=split,
+                trans=trans,
+            )
+            samples.append(
+                {
+                    "index": idx,
+                    "data": data,
+                    "c2w": c2w,
+                    "K": K,
+                    "height": height,
+                    "width": width,
+                    "split_kind": split_kind,
+                }
+            )
+
+        outputs: list[Optional[dict]] = [None] * len(samples)
+        grouped_positions: dict[tuple[int, int], list[int]] = {}
+        for position, sample in enumerate(samples):
+            resolution_key = (int(sample["height"]), int(sample["width"]))
+            grouped_positions.setdefault(resolution_key, []).append(position)
+
+        for (height, width), positions in grouped_positions.items():
+            camtoworlds = torch.stack(
+                [samples[position]["c2w"] for position in positions],
+                dim=0,
+            ).to(self.device)
+            Ks = torch.stack(
+                [samples[position]["K"] for position in positions],
+                dim=0,
+            ).to(self.device)
+            renders, _, _ = self.rasterize_splats(
+                camtoworlds=camtoworlds,
+                Ks=Ks,
+                width=width,
+                height=height,
+                sh_degree=self.cfg.sh_degree,
+                near_plane=self.cfg.near_plane,
+                far_plane=self.cfg.far_plane,
+                render_mode="RGB",
+            )
+            colors = renders.clip(0, 1).detach()
+
+            for batch_offset, position in enumerate(positions):
+                outputs[position] = {
+                    "index": samples[position]["index"],
+                    "data": samples[position]["data"],
+                    "split_kind": samples[position]["split_kind"],
+                    "rgb": colors[batch_offset],
+                }
+
+        return [output for output in outputs if output is not None]
+
     def render(
         self,
         idx,
-        split="test",
+        split=None,
         eval=False,
         trans=True,
         camera_mode: str = "fixed",
         camera_source_split: Optional[str] = None,
+        camera_spec: Optional[Dict] = None,
     ):
         device = self.device
 
+        if camera_spec is None:
+            request_index = int(idx)
+            request_split = split
+            source_repeat_index = 0
+            plan_index = request_index
+            image_id = f"gen_{request_index}"
+        else:
+            request_index = int(camera_spec["source_index"])
+            request_split = camera_spec.get("source_split")
+            source_repeat_index = int(camera_spec.get("source_repeat_index", 0))
+            plan_index = int(camera_spec.get("plan_index", request_index))
+            image_id = str(camera_spec.get("image_id", f"gen_{plan_index}"))
+
         if camera_mode == "fixed":
             data, c2w, K, height, width, split_kind = self._load_render_sample(
-                idx,
-                split=split,
+                request_index,
+                split=request_split,
                 trans=trans,
             )
             colors, multi_certainties, alphas, depths = self._render_camera_view(
@@ -440,12 +605,13 @@ class Refiner:
                 "camera_mode": "fixed",
                 "used_fallback": False,
                 "source_split": split_kind,
-                "source_index": int(idx),
+                "source_index": request_index,
+                "source_repeat_index": source_repeat_index,
             }
         elif camera_mode == "pose_jitter":
-            source_split = camera_source_split or self.refine_camera_source_split
+            source_split = request_split or camera_source_split or self.refine_camera_source_split
             data, base_c2w, K, height, width, split_kind = self._load_render_sample(
-                idx,
+                request_index,
                 split=source_split,
                 trans=trans,
             )
@@ -488,7 +654,8 @@ class Refiner:
             )
             colors, multi_certainties, alphas, depths = render_result
             sample_log["source_split"] = split_kind
-            sample_log["source_index"] = int(idx)
+            sample_log["source_index"] = request_index
+            sample_log["source_repeat_index"] = source_repeat_index
         else:
             raise ValueError(f"不支持的 refine 相机模式: {camera_mode}")
 
@@ -498,7 +665,10 @@ class Refiner:
             "camera_mode": camera_mode,
             "source_split": sample_log["source_split"],
             "source_index": sample_log["source_index"],
+            "source_repeat_index": sample_log.get("source_repeat_index", source_repeat_index),
+            "plan_index": plan_index,
             "source_image_name": data.get("image_name"),
+            "image_id": image_id,
             "sample_log": sample_log,
         }
 
@@ -570,7 +740,7 @@ class Refiner:
                 idx = np.random.choice(len(train_cams), 1, p=normalized_prob).item()
                 data = train_cams[idx]
             if data.get('Gen', False):
-                affine = self.affines[data['image_id']]
+                affine = self._ensure_affine_slot(data['image_id'])
 
             camtoworlds = data["camtoworld"][None, ...].to(device)  # [1, 4, 4]
             Ks = data["K"][None, ...].to(device)  # [1, 3, 3]
@@ -656,8 +826,8 @@ class Refiner:
                 optimizer.step()
                 optimizer.zero_grad(set_to_none=True)
             if affine is not None:
-                self.affine_optimizers[f"{data['image_id']}"].step()
-                self.affine_optimizers[f"{data['image_id']}"].zero_grad(set_to_none=True)
+                self.affine_optimizers[data['image_id']].step()
+                self.affine_optimizers[data['image_id']].zero_grad(set_to_none=True)
 
             for scheduler in schedulers:
                 scheduler.step()
@@ -676,14 +846,28 @@ class Refiner:
                 self.viewer.update(self.total_step, num_train_rays_per_step)
 
     def save(self, name="ckpt_refined"):
+        # ------------------------------------------------------------------
+        # 长跑 refine 结束后, checkpoint 落盘本身就是一等公民。
+        # 这里先确保目录存在, 避免“图像都写完了, 最后保存模型时才因为目录缺失失败”。
+        # ------------------------------------------------------------------
+        ckpt_dir = f"{self.cfg.result_dir}/ckpts"
+        os.makedirs(ckpt_dir, exist_ok=True)
+        ckpt_path = f"{ckpt_dir}/{name}.pt"
+
         # Save checkpoint
         torch.save(
             {
-                "step": -1,
+                "step": resolve_strategy_step(
+                    strategy_resume_step=self.strategy_resume_step,
+                    local_step=self.total_step,
+                ),
+                "total_step": self.total_step,
                 "splats": self.splats.state_dict(),
+                "affines": self.affines.state_dict(),
             },
-            f"{self.cfg.result_dir}/ckpts/{name}.pt",
+            ckpt_path,
         )
+        return ckpt_path
 
 
     @ torch.no_grad()

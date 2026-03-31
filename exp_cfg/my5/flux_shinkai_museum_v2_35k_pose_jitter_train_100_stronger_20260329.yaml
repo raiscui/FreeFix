@@ -14,7 +14,7 @@ test_split: train
 test_trans: [0, 0, 0]
 test_rots: [0, 0, 0]
 
-prompt: "high detail. Refine images, repair visual errors and blurriness in AI-generated images, perform defogging and enhance clarity. Correct unreasonable elements, data errors and illogical content in the images, remove ghosting, and boost details, textures and edges."
+prompt: "high detail. Refine images, Ghost artifact removal, image quality enhancement, and restoration of compression artifacts. repair visual errors and blurriness in AI-generated images, perform defogging and enhance clarity. Correct unreasonable elements, data errors and illogical content in the images, remove ghosting, and boost details, textures and edges."
 
 strength: 0.65
 refine_steps: 400

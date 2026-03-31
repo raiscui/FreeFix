@@ -149,6 +149,32 @@
 - 从当前代码看, 它完全有落点, 但第一版一定要把姿态扰动限制在很小范围, 否则 2D 扩散会开始替 3D 几何编故事
 - 这类新分支最需要先守住评测口径, 否则很容易在观感变好的同时, 让 benchmark 失去解释力
 
+## [2026-03-30 00:44:35] [Session ID: 019d3934-ae28-7011-acaa-2f5fa77d5f39] 任务名称: 评估 `my5` stronger pose jitter 正式 run
+
+### 任务内容
+- 复查 [flux_shinkai_museum_v2_pose_jitter_train_100_stronger_20260329](/root/autodl-tmp/home/rais/FreeFix/outputs/my5_colmap_fastgs_stable_35k_dense/flux_shinkai_museum_v2_pose_jitter_train_100_stronger_20260329) 的完成状态
+- 汇总 [pose_jitter_log.jsonl](/root/autodl-tmp/home/rais/FreeFix/outputs/my5_colmap_fastgs_stable_35k_dense/flux_shinkai_museum_v2_pose_jitter_train_100_stronger_20260329/refine/pose_jitter_log.jsonl) 的抖动幅度
+- 对比 `before / render / gen / after` 四组图像的变化幅度, 并补充肉眼抽样拼图
+
+### 完成过程
+- 先确认后台进程已经结束, 且 `before_refine / refine/render / refine/gen / after_refine` 都完整落了 `100` 张
+- 再统计 jitter:
+  - `trans_norm mean=0.0476, max=0.0850`
+  - `rot_norm mean=4.7157, max=9.4660`
+- 然后分别量化:
+  - `gen-vs-render mae mean=0.0157`
+  - `before-vs-after mae mean=0.0116`
+- 最后补了两张评估拼图:
+  - [eval_montage_20260330.jpg](/root/autodl-tmp/home/rais/FreeFix/outputs/my5_colmap_fastgs_stable_35k_dense/flux_shinkai_museum_v2_pose_jitter_train_100_stronger_20260329/eval_montage_20260330.jpg)
+  - [eval_before_after_topdiff_20260330.jpg](/root/autodl-tmp/home/rais/FreeFix/outputs/my5_colmap_fastgs_stable_35k_dense/flux_shinkai_museum_v2_pose_jitter_train_100_stronger_20260329/eval_before_after_topdiff_20260330.jpg)
+
+### 总结感悟
+- 这轮 stronger 参数已经足够把 synthetic supervise 从“几乎还是原镜头”拉到“明确离开原镜头”
+- 但最终 fixed-view 的变化仍偏保守, 更像温和修整, 而不是剧烈重塑
+- 另外还暴露出一个独立收尾问题:
+  - 图像产物完整
+  - 但预期的 refined checkpoint 当前没有落盘, 需要后续单独排查保存阶段
+
 ## [2026-03-29 10:58:30] [Session ID: 019d3934-ae28-7011-acaa-2f5fa77d5f39] 任务名称: 为 pose jitter refine 手工创建 OpenSpec change
 
 ### 任务内容
@@ -335,3 +361,168 @@
 - 这次最危险的误导是“黑图出现在 pose_jitter 输出里, 就以为一定是 pose_jitter 的锅”
 - 对加载成熟 checkpoint 的继续训练流程, 任何和“step”有关的第三方 strategy 都必须先确认恢复语义
 - 如果一个流程会在 `step=0` 做 destructive reset, 那么从 checkpoint 恢复时绝不能直接复用局部步数当全局训练步数
+
+## [2026-03-30 01:06:23] [Session ID: 019d3934-ae28-7011-acaa-2f5fa77d5f39] 任务名称: 扩展多 split / 多 jitter refine 并启动 `my5` 正式长跑
+
+### 任务内容
+- 修改 [ours/refine_by_sdxl.py](/root/autodl-tmp/home/rais/FreeFix/ours/refine_by_sdxl.py), 让 `SDXL` refine 与 `Flux` 共用同一套多 split / 多 jitter schedule helper
+- 更新 [exp_cfg/base.yaml](/root/autodl-tmp/home/rais/FreeFix/exp_cfg/base.yaml) 与 [README.md](/root/autodl-tmp/home/rais/FreeFix/README.md), 正式公开:
+  - `refine_train_splits`
+  - `refine_camera_source_splits`
+  - `pose_jitter_views_per_source`
+- 新增 [tests/test_refine_view_plan.py](/root/autodl-tmp/home/rais/FreeFix/tests/test_refine_view_plan.py), 并补强 [tests/test_pose_jitter_refine.py](/root/autodl-tmp/home/rais/FreeFix/tests/test_pose_jitter_refine.py)
+- 新增正式配置 [exp_cfg/my5/flux_shinkai_museum_v2_35k_pose_jitter_train_test_x3_20260330.yaml](/root/autodl-tmp/home/rais/FreeFix/exp_cfg/my5/flux_shinkai_museum_v2_35k_pose_jitter_train_test_x3_20260330.yaml)
+- 启动 `my5` 的正式 `Flux refine` 长跑
+
+### 完成过程
+- 先把 `SDXL` 从旧的 range-based 循环迁到:
+  - `build_real_train_pool(...)`
+  - `build_refine_view_plan(...)`
+- 再补齐 pose jitter log 的计划字段:
+  - `plan_index`
+  - `source_repeat_index`
+  - `image_id`
+- 然后用真实 `my5` 场景做最小 smoke, 直接验证:
+  - `train_len = 283`
+  - `test_len = 41`
+  - `synthetic_plan_count = 972`
+  - probe checkpoint 落盘成功
+- 最后启动正式命令:
+  - `.pixi/envs/default/bin/python -u -m ours.refine_by_flux --exp_cfg exp_cfg/my5/flux_shinkai_museum_v2_35k_pose_jitter_train_test_x3_20260330.yaml`
+  - 并把 stdout/stderr 一起写入:
+    - `outputs/my5_colmap_fastgs_stable_35k_dense/flux_shinkai_museum_v2_pose_jitter_train_test_x3_20260330/run.log`
+
+### 总结感悟
+- 这轮真正关键的不是“把 jitter 调大”, 而是把“每个基镜头展开多个 synthetic 视角”做成一条完整的数据契约
+- 只有当:
+  - 配置
+  - schedule helper
+  - render 日志
+  - affine/image_id
+  - 正式长跑
+- 全部对齐时, `(train + test) * 3` 才不是纸面设想
+- 上一轮图像都齐了却没有最终 checkpoint, 逼着我们这次把“save 是否真的落盘”提前成了 launch gate, 这是对的
+
+## [2026-03-30 02:00:55] [Session ID: 019d3934-ae28-7011-acaa-2f5fa77d5f39] 任务名称: 挂载 refine 结束后的自动指标评估
+
+### 任务内容
+- 读取 [ours/evaluation.py](/root/autodl-tmp/home/rais/FreeFix/ours/evaluation.py), 确认正式调用契约
+- 为当前 `my5` 长跑挂一个独立 watcher, 在 refine 进程退出后自动执行:
+  - `.pixi/envs/default/bin/python -u -m ours.evaluation --exp_cfg exp_cfg/my5/flux_shinkai_museum_v2_35k_pose_jitter_train_test_x3_20260330.yaml --eval_test`
+- 把评估日志独立落到:
+  - [eval_after_refine.log](/root/autodl-tmp/home/rais/FreeFix/outputs/my5_colmap_fastgs_stable_35k_dense/flux_shinkai_museum_v2_pose_jitter_train_test_x3_20260330/eval_after_refine.log)
+
+### 完成过程
+- 先确认当前正式 refine 的 Python PID 是 `373665`
+- 再确认 `ours.evaluation` 的行为:
+  - 先评估 base checkpoint
+  - 如果 refined checkpoint 已存在, 再评估 refined
+- 然后尝试过一版 `nohup` watcher, 发现它没有稳定挂住
+- 最后改为单独 PTY watcher 会话 `17732`, 明确等待 refine 主进程结束后再触发评估
+
+### 总结感悟
+- 这种“长跑结束后还要自动做一件事”的场景, PTY 会话比一次性 `nohup` 更可控, 也更容易后续继续追踪
+- 评估不该靠记忆, 应该直接接成训练收尾链路的一部分
+
+## [2026-03-31 00:20:00] [Session ID: 019d436e-9bf6-7313-ab99-623578ee4ecf] 任务名称: 核对 `after_refine.mp4` 为什么缺失
+
+### 任务内容
+- 回读 [ours/refine_by_flux.py](/root/autodl-tmp/home/rais/FreeFix/ours/refine_by_flux.py), 确认 `after_refine.mp4` 是否属于主流程自动产物
+- 核对正式 run 的 [run.log](/root/autodl-tmp/home/rais/FreeFix/outputs/my5_colmap_fastgs_stable_35k_dense/flux_shinkai_museum_v2_pose_jitter_train_test_x3_20260330/run.log)、输出目录和 watcher 日志
+- 判断这次缺失是“设计如此”还是“运行未完整收尾”
+
+### 完成过程
+- 先静态确认 `ours/refine_by_flux.py` 里确实会:
+  - 初始化 `after_refine_writer`
+  - 在 refine 主循环之后渲染 fixed-view `after_refine/*.jpg`
+  - 再 close `after_refine_writer`
+  - 再保存 `ckpt_{exp_name}.pt`
+- 再对照真实产物, 发现:
+  - `before_refine` 已完整落盘
+  - `refine/render`、`refine/gen`、`refine/depth` 都只到 `327` 帧
+  - `after_refine` 为空
+  - refined checkpoint 也不存在
+- 最后规范化 `run.log` 的回车进度条后确认:
+  - 已经进入 writer 初始化和 `synthetic plan count=972`
+  - 但没有任何 `开始保存 refine checkpoint` 或 `refine checkpoint 已保存` 日志
+
+### 总结感悟
+- 这次缺的不是“mp4 导出步骤”, 而是整个 run 没有走完整个收尾段
+- `eval_after_refine.log` 这个名字容易让人误以为已经完成 refined 评估, 但当前文件里其实只是 watcher 轮询日志
+- 以后排查这类长跑任务时, 先数:
+  - synthetic plan 总数
+  - 已生成帧数
+  - checkpoint 是否存在
+  - 比直接盯着目录名更快收敛
+
+## [2026-03-31 00:40:00] [Session ID: codex-refine-resume-speed-20260331] 任务名称: 收尾 refine 可恢复链并优化 fixed render 导出速度
+
+### 任务内容
+- 收尾 [refine_by_flux.py](/root/autodl-tmp/home/rais/FreeFix/ours/refine_by_flux.py), 补上“已 complete 直接退出”的快速路径, 并复核 resume state / rolling ckpt / fixed-view batch render 的整条链路
+- 改造 [refine_by_sdxl.py](/root/autodl-tmp/home/rais/FreeFix/ours/refine_by_sdxl.py), 让它和 Flux 一样支持:
+  - `refine_resume_state.json`
+  - `ckpt_<exp_name>__resume_latest.pt`
+  - `generated_cams.jsonl`
+  - fixed-view batch RGB render
+- 扩充 [test_refine_runtime.py](/root/autodl-tmp/home/rais/FreeFix/tests/test_refine_runtime.py), 锁定:
+  - resume state roundtrip
+  - stale artifact cleanup
+  - generated camera append / restore
+- 更新 [base.yaml](/root/autodl-tmp/home/rais/FreeFix/exp_cfg/base.yaml) 和 [README.md](/root/autodl-tmp/home/rais/FreeFix/README.md), 把新配置键和恢复行为写明
+
+### 完成过程
+- 先回读支线历史和当前工作区, 确认上轮真正没收尾的是 `Flux` 的静态校验和 `SDXL` 的同步改造
+- 中途先给 `Flux` 增加了“状态已 complete 且 final ckpt 真实存在时直接返回”的早退逻辑
+- 再把 `SDXL` 从旧的 writer 直写流程迁到和 `Flux` 同一套恢复语义:
+  - fixed-view 走 batch render
+  - synthetic jpg 序列当真相源
+  - mp4 丢了可重建
+  - rolling ckpt + state 按 plan 周期落盘
+- 最后完成验证:
+  - `py_compile` 通过
+  - `unittest` 跑了 27 项
+  - 结果 `OK`
+
+### 总结感悟
+- 这轮真正稳妥的提速点, 不是把 synthetic plan 粗暴并发, 而是把固定视角导出改成 batched rasterize
+- 对这种会修改模型状态的长循环, “可恢复”本身就是性能的一部分, 因为它直接减少了中断后的重复成本
+- `jpg` 序列做真相源, `mp4` 只当衍生产物, 这个思路很适合长跑任务的收尾链路
+
+## [2026-03-31 21:49:00] [Session ID: codex-rerun-flux-20260331] 任务名称: 重新启动 `flux_shinkai_museum_v2_pose_jitter_train_test_x3_20260330`
+
+### 任务内容
+- 核对 [flux_shinkai_museum_v2_35k_pose_jitter_train_test_x3_20260330.yaml](/root/autodl-tmp/home/rais/FreeFix/exp_cfg/my5/flux_shinkai_museum_v2_35k_pose_jitter_train_test_x3_20260330.yaml) 仍然是要重跑的目标配置
+- 检查旧 `refine_by_flux` 进程是否还活着
+- 安全备份旧输出目录, 避免新 run 混入旧日志和旧半截产物
+- 启动新的后台 rerun 会话, 并确认新 `run.log` 已开始写入
+
+### 完成过程
+- 先确认当前没有活着的 `ours.refine_by_flux` 相关进程
+- 再确认旧输出目录仍存在, 但 `ckpts/` 里没有同名 final / resume checkpoint 残留
+- 然后把旧目录改名为:
+  - `outputs/my5_colmap_fastgs_stable_35k_dense/flux_shinkai_museum_v2_pose_jitter_train_test_x3_20260330__rerun_backup_20260331_134804`
+- 最后启动新的后台会话:
+  - `OMP_NUM_THREADS=1 .pixi/envs/default/bin/python -u -m ours.refine_by_flux --exp_cfg exp_cfg/my5/flux_shinkai_museum_v2_35k_pose_jitter_train_test_x3_20260330.yaml`
+  - PTY 会话号: `52828`
+- 当前新 `run.log` 已开始写入, 冷启动阶段正在下载 LPIPS 依赖 `alexnet` 权重
+
+### 总结感悟
+- 对“重跑同名实验”这种动作, 先改名备份旧目录, 比直接覆盖安全得多
+- `OMP_NUM_THREADS=1` 这次顺手规避了之前 `libgomp` 那条无效环境变量噪音
+- 当前 rerun 已经成功起步, 剩下就是后台长跑问题, 不再是“能不能启动”的问题
+## [2026-04-01 01:16:22] [Session ID: codex-rerun-watch-20260401] 任务名称: 将当前 Flux 实验配置的 pipeline offload 从 `model_cpu` 改为 `none`
+
+### 任务内容
+- 修改 `exp_cfg/my5/flux_shinkai_museum_v2_35k_pose_jitter_train_test_x3_20260330.yaml`
+- 将 `refine_pipeline_offload_mode` 从 `model_cpu` 切换到 `none`
+- 核对配置落盘结果, 并确认当前运行进程是否仍在执行
+
+### 完成过程
+- 先回读当前实验 yaml, 确认原值为 `model_cpu`
+- 使用补丁把配置项改成 `none`
+- 用 `rg` 和 `sed` 二次核对配置文件, 确认当前落盘值已变成 `none`
+- 用 `pgrep -af` 确认现有 rerun 进程仍在运行, 由此明确本次配置改动不会热更新到当前进程
+
+### 总结感悟
+- 这次改动已经为后续新启动或重启后的 rerun 准备好 `none` 模式
+- 运行中的 Python 任务不会自动重新读取 yaml, 所以“改配置”和“当前实例切换模式”必须明确区分

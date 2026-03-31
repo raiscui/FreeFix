@@ -54,3 +54,57 @@
 ### 当前不做的原因
 - OpenSpec `add-pose-jitter-refine` 的任务已经全部完成
 - 这两个方向都属于“进一步增强证据”而不是当前 change 的收尾前提
+
+## [2026-03-30 00:44:35] [Session ID: 019d3934-ae28-7011-acaa-2f5fa77d5f39] 主题: 补查 stronger 正式 run 为什么没有最终 refined checkpoint
+
+### 延后事项
+- 复核 `ours/refine_by_flux.py` 长跑结束后的保存阶段
+  - 目标文件按代码应为:
+    - `outputs/my5_colmap_fastgs_stable_35k_dense/ckpts/ckpt_flux_shinkai_museum_v2_pose_jitter_train_100_stronger_20260329.pt`
+- 优先做最小取证:
+  - 给 `refiner.save()` 前后补阶段日志
+  - 再跑一轮更小规模 refine, 看是:
+    - 根本没走到 save
+    - save 抛错但没进当前日志
+    - 还是保存到了别的路径
+
+### 当前不做的原因
+- 本轮用户先要的是“评估下”
+- 图像结果已经可以独立评估
+- 但 checkpoint 持久化问题属于另一个收尾排查任务
+
+## [2026-03-31 00:25:00] [Session ID: 019d436e-9bf6-7313-ab99-623578ee4ecf] 主题: 补查 `train_test_x3_20260330` 为什么停在 `plan_index=326`
+
+### 延后事项
+- 给 `ours/refine_by_flux.py` 的 refine 主循环补更细的阶段日志
+  - 至少记录:
+    - 每个 `plan_index` 开始
+    - `pipe(...)` 返回
+    - `refiner.refine(...)` 返回
+- 给 watcher 补最终退出状态记录
+  - 包括:
+    - 进程退出时间
+    - exit code / signal
+    - 是否真正开始执行 `ours.evaluation`
+- 如果要最小复现, 优先做一轮缩小版配置
+  - 保留同样的 `pose_jitter` 语义
+  - 但把 synthetic plan 压到几十帧
+  - 看是否仍会在“无 traceback”的情况下提前停掉
+
+### 当前不做的原因
+- 当前用户问题只是在问“为什么没有 `after_refine.mp4`”
+- 这个问题已经能用现有证据回答:
+  - run 没有走完整个收尾链路
+- 但“为何中途停掉”的最终根因, 还需要下一轮专门取证
+## [2026-03-31 00:42:00] [Session ID: codex-refine-resume-speed-20260331] 主题: GPU 机器上补 refine render 动态 benchmark
+
+### 待办事项
+- 在有可用 NVIDIA driver 的机器上, 对比 fixed-view 导出两条路径的真实耗时:
+  - 旧路径: 单视角逐帧 render
+  - 新路径: `render_fixed_rgb_batch(...)`
+- 如果还要继续追求 synthetic 主循环速度, 下一步先做 profile, 不直接做多 plan 并发
+
+### 原因
+- 当前机器只能完成静态验证和纯 Python 测试
+- 用户已经明确关心“render 图片是否能多个同时生成”
+- 这个问题后续需要 GPU 实测数据, 不能只靠静态阅读下结论

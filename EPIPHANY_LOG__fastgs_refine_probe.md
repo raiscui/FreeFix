@@ -182,3 +182,79 @@
   - [recon/refiner.py](/root/autodl-tmp/home/rais/FreeFix/recon/refiner.py)
   - [recon/refine_runtime.py](/root/autodl-tmp/home/rais/FreeFix/recon/refine_runtime.py)
   - [notes__fastgs_refine_probe.md](/root/autodl-tmp/home/rais/FreeFix/notes__fastgs_refine_probe.md)
+
+## [2026-03-30 00:44:35] [Session ID: 019d3934-ae28-7011-acaa-2f5fa77d5f39] 主题: refine 长跑里“图像产物齐了”并不等于“最终 checkpoint 也一定保存成功”
+
+### 发现来源
+- 在评估 `my5` 的 stronger `pose_jitter` 正式 run 时发现
+
+### 核心问题
+- 这轮 run 的:
+  - `before_refine`
+  - `refine/render`
+  - `refine/gen`
+  - `after_refine`
+- 都已完整落盘
+- `tb_refine` 事件文件也存在
+- 但代码按理应保存到:
+  - `outputs/my5_colmap_fastgs_stable_35k_dense/ckpts/ckpt_flux_shinkai_museum_v2_pose_jitter_train_100_stronger_20260329.pt`
+- 当前却没有这份 checkpoint
+
+### 为什么重要
+- 这类现象很会误导人
+- 人一看到最终视频和 after 图都齐了, 很容易自然脑补成:
+  - “整条 refine 流程已经完全成功收尾”
+- 但实际上:
+  - 可视化收尾
+  - 模型持久化收尾
+- 是两件需要分别验证的事情
+
+### 未来风险
+- 以后如果只检查图片和 mp4, 不检查 checkpoint 文件, 很可能会把“无法复用最终模型”的问题拖到更后面才暴露
+- 也会让后续对结果的复现、导出和继续训练都变得不可靠
+
+### 当前结论
+- 当前已确认:
+  - 图像结果可评估
+  - 模型保存结果仍未确认
+- 当前未确认:
+  - 是没走到 save
+  - save 抛错但没留现成日志
+  - 还是路径与预期不一致
+
+### 后续讨论入口
+- 下次优先先看:
+  - [ours/refine_by_flux.py](/root/autodl-tmp/home/rais/FreeFix/ours/refine_by_flux.py)
+  - [recon/refiner.py](/root/autodl-tmp/home/rais/FreeFix/recon/refiner.py)
+  - [LATER_PLANS__fastgs_refine_probe.md](/root/autodl-tmp/home/rais/FreeFix/LATER_PLANS__fastgs_refine_probe.md)
+## [2026-03-31 00:43:00] [Session ID: codex-refine-resume-speed-20260331] 主题: refine 的“可并行 render”边界要按语义分层
+
+### 发现来源
+- 在补 `Flux / SDXL` 的断点恢复和 fixed-view batch render 时, 重新梳理了 `Refiner` 的 render / refine 调用链
+
+### 核心问题
+- 用户问“生成 render 图片时能不能多个同时生成”
+- 这句话如果不分层, 很容易把两类完全不同的 render 混成一个优化按钮:
+  - fixed-view 对比导出
+  - synthetic supervise 主循环
+
+### 为什么重要
+- fixed-view 导出只是产物导出, 批量化不会改训练语义
+- synthetic 主循环每轮都会更新当前高斯状态, 粗暴并发多个 plan 会直接改变监督顺序和结果
+
+### 未来风险
+- 如果后面有人把“提高吞吐”简单实现成多 plan 并行, 很可能得到更快但不等价的 refine
+- 这种变化如果没有单独 capability 和 benchmark 口径, 很容易把语义变化伪装成单纯优化
+
+### 当前结论
+- 可以默认推进的优化是:
+  - fixed-view `before_refine / after_refine` 走 batched RGB rasterize
+- 不能默认推进的优化是:
+  - synthetic plan 多线程并发
+- 如果以后要继续提 synthetic 主循环速度, 应先做 profile, 再讨论 snapshot/chunk 级别的受控新语义
+
+### 后续讨论入口
+- 下次继续时先看:
+  - `/root/autodl-tmp/home/rais/FreeFix/ours/refine_by_flux.py`
+  - `/root/autodl-tmp/home/rais/FreeFix/ours/refine_by_sdxl.py`
+  - `/root/autodl-tmp/home/rais/FreeFix/recon/refiner.py`

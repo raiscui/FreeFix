@@ -117,6 +117,22 @@
 
 **目前在阶段2** - 正在核对 `pytorch3d` 的 CUDA 探测逻辑, 准备做最小验证并选择正确修复方向。
 
+## [2026-03-29 23:16:05] [Session ID: 83b49306-8fed-4524-947c-662aff798a0b] [记录类型]: 启用支线上下文 `__flux_reference_refine`
+
+### 支线索引
+- 启用原因: 用户追问当前项目里的 Flux refine 是否支持"两张图输入, 用一张图去修另一张图", 这是与主线安装/训练不同的能力设计问题。
+- 支线后缀: `__flux_reference_refine`
+- 支线主题: 评估当前 Flux refine 的双图参考修复能力, 并整理可落地的改造路线。
+- 说明: 后续该问题的计划、笔记和工作记录都写入同后缀上下文文件, 避免和主线任务混写。
+
+## [2026-03-29 16:54:59] [Session ID: 019d3a83-dc80-73d3-928e-1ab2422bc1bf] [记录类型]: 启用支线上下文 `__fastdropgs_checkpoint_refine`
+
+### 支线索引
+- 启用原因: 用户明确要求使用 OpenSpec 新建一个 change, 用于支持把 `fastdropgs` 的 checkpoint(`.../chkpnt50000.pth`) 转换进当前工程, 并支持转换后继续 refine。
+- 支线后缀: `__fastdropgs_checkpoint_refine`
+- 支线主题: 为 `fastdropgs` checkpoint 转换与后续 refine 支持创建独立的 OpenSpec 变更骨架。
+- 说明: 后续该问题的计划、笔记和工作记录都写入同后缀上下文文件, 避免和主线安装任务混写。
+
 ## [2026-03-26 07:20:13] [Session ID: 019d28a9-9701-7013-a2b7-6683f4e4f3fe] [记录类型]: 已修复 CUDA 工具链指向, 完成针对性验证
 
 ## 阶段
@@ -177,6 +193,14 @@
 ## 状态
 
 **目前在阶段2** - 正在核对目标远端接入方式与 push 权限, 准备执行推送。
+
+## [2026-03-31 16:48:25] [Session ID: codex-flux-kontext-change-20260331] [记录类型]: 启用支线上下文 `__flux_kontext_change`
+
+### 支线索引
+- 启用原因: 用户要求创建一个 OpenSpec change, 用于给当前项目增加可选的 `FLUX.1-Kontext-dev` 路径, 作为与 `sdxl/flux` 并列的第三种 refine/generation 方案, 明确不是替代现有 `FLUX.1-dev`。
+- 支线后缀: `__flux_kontext_change`
+- 支线主题: 创建 `FLUX.1-Kontext-dev` 可选接入方案的 OpenSpec change 骨架, 并整理第一份 artifact 的写作入口。
+- 说明: 后续该问题的计划、笔记和工作记录都写入同后缀上下文文件, 避免和主线任务混写。
 
 ## [2026-03-26 07:40:06] [Session ID: 019d28a9-9701-7013-a2b7-6683f4e4f3fe] [记录类型]: 继续安装, 暴露出 unidepth 与 numpy 版本约束冲突
 

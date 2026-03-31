@@ -8,13 +8,18 @@ import torch
 from plyfile import PlyData, PlyElement
 
 from recon.import_fastgs import (
+    build_default_output_label,
     eval_real_sh_bases,
     extract_fastgs_checkpoint_splats,
     extract_fastgs_ply_splats,
+    infer_checkpoint_source_format,
+    infer_step_from_path,
+    load_fastgs_source,
     rotate_real_sh_coefficients,
     quat_to_rotmat_wxyz,
     resolve_data_dir_arg,
     resolve_source_arg,
+    save_freefix_checkpoint,
     transform_splats_to_freefix,
 )
 
@@ -150,6 +155,25 @@ class ImportFastGSTest(unittest.TestCase):
         )()
         self.assertEqual(resolve_data_dir_arg(args), Path("/tmp/demo_colmap"))
 
+    def test_infer_step_from_path_supports_fastdropgs_checkpoint_name(self) -> None:
+        self.assertEqual(
+            infer_step_from_path(Path("/tmp/my8_input_50k_from45k_resetopt/chkpnt50000.pth")),
+            50000,
+        )
+
+    def test_infer_checkpoint_source_format_marks_fastdropgs_checkpoint(self) -> None:
+        source_format = infer_checkpoint_source_format(
+            Path("/home/rais/fast-dropgs/output/demo/chkpnt50000.pth")
+        )
+        self.assertEqual(source_format, "fastdropgs_checkpoint")
+
+    def test_build_default_output_label_uses_parent_for_fastdropgs_checkpoint(self) -> None:
+        label = build_default_output_label(
+            Path("/tmp/my8_input_50k_from45k_resetopt/chkpnt50000.pth"),
+            "fastdropgs_checkpoint",
+        )
+        self.assertEqual(label, "my8_input_50k_from45k_resetopt_chkpnt50000")
+
     def test_extract_fastgs_checkpoint_splats_maps_capture_tuple(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             ckpt_path = Path(tmp_dir) / "ckpt_12.pth"
@@ -180,6 +204,62 @@ class ImportFastGSTest(unittest.TestCase):
             self.assertEqual(tuple(splats["scales"].shape), (1, 3))
             self.assertEqual(tuple(splats["quats"].shape), (1, 4))
             self.assertEqual(tuple(splats["opacities"].shape), (1,))
+
+    def test_load_fastgs_source_marks_chkpnt_name_as_fastdropgs_checkpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            run_dir = Path(tmp_dir) / "my8_input_50k_from45k_resetopt"
+            run_dir.mkdir()
+            ckpt_path = run_dir / "chkpnt50000.pth"
+            model_args = (
+                3,
+                torch.tensor([[1.0, 2.0, 3.0]], dtype=torch.float32),
+                torch.tensor([[[0.1, 0.2, 0.3]]], dtype=torch.float32),
+                torch.tensor([[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]], dtype=torch.float32),
+                torch.tensor([[0.4, 0.5, 0.6]], dtype=torch.float32),
+                torch.tensor([[1.0, 0.0, 0.0, 0.0]], dtype=torch.float32),
+                torch.tensor([[-1.5]], dtype=torch.float32),
+                torch.zeros((1,), dtype=torch.float32),
+                torch.zeros((1, 1), dtype=torch.float32),
+                torch.zeros((1, 1), dtype=torch.float32),
+                torch.zeros((1, 1), dtype=torch.float32),
+                {"state": {}, "param_groups": []},
+                {"state": {}, "param_groups": []},
+                np.float32(1.0),
+            )
+            torch.save((model_args, 50000), ckpt_path)
+
+            splats, step, source_format = load_fastgs_source(ckpt_path)
+
+            self.assertEqual(step, 50000)
+            self.assertEqual(source_format, "fastdropgs_checkpoint")
+            self.assertEqual(tuple(splats["means"].shape), (1, 3))
+
+    def test_save_freefix_checkpoint_keeps_fastdropgs_source_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_path = Path(tmp_dir) / "out.pt"
+            source_path = Path("/tmp/my8_input_50k_from45k_resetopt/chkpnt50000.pth")
+            splats = {
+                "means": torch.zeros((1, 3), dtype=torch.float32),
+                "opacities": torch.zeros((1,), dtype=torch.float32),
+                "quats": torch.tensor([[1.0, 0.0, 0.0, 0.0]], dtype=torch.float32),
+                "scales": torch.zeros((1, 3), dtype=torch.float32),
+                "sh0": torch.zeros((1, 1, 3), dtype=torch.float32),
+                "shN": torch.zeros((1, 15, 3), dtype=torch.float32),
+            }
+
+            save_freefix_checkpoint(
+                output_path=output_path,
+                splats=splats,
+                step=50000,
+                source=source_path,
+                source_format="fastdropgs_checkpoint",
+                normalize_enabled=False,
+            )
+            payload = torch.load(output_path, map_location="cpu", weights_only=False)
+
+            self.assertEqual(payload["source_format"], "fastdropgs_checkpoint")
+            self.assertEqual(payload["step"], 50000)
+            self.assertFalse(payload["normalized_for_freefix"])
 
     def test_extract_fastgs_ply_splats_restores_sh_layout(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

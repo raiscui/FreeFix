@@ -1,0 +1,34 @@
+# 基于 fast-dropgs `my8_input_50k_from45k_resetopt/chkpnt50000.pth` 的专用 Flux refine 配置。
+# 这条线继续复用 `my6 / my7 fixsh_rerun` 的口径。
+# 差异主要收敛到:
+# - `base_dir`
+# - `exp_name`
+# - 与上游 `input` 视角一致的 277 视角场景契约
+
+base_dir: outputs/my8_colmap_fastgs_input_pruned_v1_stable_50k_dense
+exp_name: flux_shinkai_museum_v2_fastdropgs_my8_input_50k_from45k_resetopt_fixsh_rerun
+
+refine_start_idx: 0
+refine_end_idx: 35
+
+train_start_idx: 0
+train_end_idx: 242
+
+test_split: test
+test_trans: [0, 0, 0]
+test_rots: [0, 0, 0]
+
+prompt: "high detail. Refine images, repair visual errors and blurriness in AI-generated images, perform defogging and enhance clarity. Correct unreasonable elements, data errors and illogical content in the images, remove ghosting, and boost details, textures and edges."
+
+# 先保持 `my6 / my7` 已经跑通过的一组 refine 参数。
+# 这样这轮差异主要来自 `my8` 场景和 fast-dropgs 基础 checkpoint 本身。
+strength: 0.65
+refine_steps: 400
+warp_ratio: 0.3
+
+hessian_attr: ["means", "quats", "scales"]
+
+data_type: colmap
+load_step: 50000
+
+flux_model_path: /home/rais/.cache/modelscope/hub/models/black-forest-labs/FLUX___1-dev

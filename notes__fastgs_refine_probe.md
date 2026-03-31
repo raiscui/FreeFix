@@ -71,6 +71,595 @@
 
 ## 综合发现
 
+## [2026-03-31 15:53:38] [Session ID: codex-modelscope-rerun-20260331] 笔记: `FLUX.1-dev` 已切到 ModelScope 精简续传
+
+## 来源
+
+### 来源1: 旧整仓下载会话 `86411`
+
+- 要点:
+  - 旧会话实际还活着, 不是已经彻底停掉。
+  - 它会同时下载:
+    - `text_encoder*`
+    - `transformer/*`
+    - `vae/*`
+    - 顶层 `flux1-dev.safetensors`
+    - 顶层 `ae.safetensors`
+  - 其中顶层 `flux1-dev.safetensors` 对当前 `FluxPipeline.from_pretrained(local_dir, ...)` 路径是冗余下载。
+
+### 来源2: `modelscope download --help`
+
+- 命令:
+  - `OMP_NUM_THREADS=1 /home/rais/.local/bin/modelscope download --help`
+- 要点:
+  - 官方 CLI 明确支持:
+    - `--include`
+    - `--exclude`
+  - 因此可以安全地从“整仓下载”切成“精简下载”。
+
+### 来源3: 本地 `model_index.json` 与仓库内 `ours/pipelines/flux_pipeline.py`
+
+- 要点:
+  - `model_index.json` 声明的组件为:
+    - `scheduler`
+    - `text_encoder`
+    - `text_encoder_2`
+    - `tokenizer`
+    - `tokenizer_2`
+    - `transformer`
+    - `vae`
+  - 当前本地 `FluxPipeline` 也正是按这套 diffusers 目录结构加载。
+  - 这进一步说明:
+    - 顶层 `flux1-dev.safetensors` 不是当前入口的必需项。
+
+### 来源4: 新精简下载会话 `3152`
+
+- 命令:
+  - `OMP_NUM_THREADS=1 /home/rais/.local/bin/modelscope download --model 'black-forest-labs/FLUX.1-dev' --local_dir '/home/rais/.cache/modelscope/hub/models/black-forest-labs/FLUX.1-dev' --exclude flux1-dev.safetensors ae.safetensors dev_grid.jpg LICENSE.md`
+- 要点:
+  - 新会话显示只处理 `6 items`:
+    - `text_encoder/model.safetensors`
+    - `text_encoder_2/model-00001-of-00002.safetensors`
+    - `text_encoder_2/model-00002-of-00002.safetensors`
+    - `transformer/diffusion_pytorch_model-00001-of-00003.safetensors`
+    - `transformer/diffusion_pytorch_model-00002-of-00003.safetensors`
+    - `transformer/diffusion_pytorch_model-00003-of-00003.safetensors`
+  - `text_encoder/model.safetensors` 已经正式落盘。
+  - `text_encoder_2` 与 `transformer` 当前仍在 `._____temp/` 中续传。
+
+### 来源5: 本地缓存目录快照
+
+- 命令:
+  - `find /home/rais/.cache/modelscope/hub/models/black-forest-labs/FLUX.1-dev -maxdepth 3 -type f`
+  - `du -sh /home/rais/.cache/modelscope/hub/models/black-forest-labs/FLUX.1-dev`
+  - `df -h /home/rais/.cache/modelscope/hub/models/black-forest-labs/FLUX.1-dev`
+- 要点:
+  - 当前已正式落盘的关键文件包括:
+    - `model_index.json`
+    - `configuration.json`
+    - `scheduler/scheduler_config.json`
+    - `tokenizer/*`
+    - `tokenizer_2/*`
+    - `text_encoder/config.json`
+    - `text_encoder/model.safetensors`
+    - `text_encoder_2/config.json`
+    - `text_encoder_2/model.safetensors.index.json`
+    - `transformer/config.json`
+    - `transformer/diffusion_pytorch_model.safetensors.index.json`
+    - `vae/config.json`
+    - `vae/diffusion_pytorch_model.safetensors`
+  - 当前模型目录体积已增长到约 `19G`。
+  - 文件系统剩余空间约 `124G`, 当前没有磁盘空间风险。
+
+## 综合发现
+
+### 现象
+
+- 当前 rerun 仍未重新启动。
+- 当前真正进行中的工作是 ModelScope 精简续传, 而不是 `ours.refine_by_flux` 主流程。
+
+### 已验证结论
+
+- 旧整仓下载已经被停止, 并且不应恢复。
+- 新策略已经成功把下载集合收敛为 `6` 个真正缺失的必需权重。
+- 当前缓存目录已经具备大部分配置和小组件, 只差 `text_encoder_2` 与 `transformer` 的大权重完成最终落盘。
+
+### 下一步判据
+
+- 当 `text_encoder_2/` 与 `transformer/` 目录下真实出现对应 `.safetensors` 成品文件时:
+  - 立即执行本地 `FluxPipeline.from_pretrained(...)` 最小校验
+  - 校验通过后立刻启动正式 rerun
+
+## [2026-04-01 00:50:02] [Session ID: codex-rerun-watch-20260401] 笔记: 正式 rerun 已稳定进入 synthetic 主循环
+
+## 来源
+
+### 来源1: 进程与 PTY 动态输出
+
+- 命令:
+  - `pgrep -af 'ours\\.refine_by_flux|tee .*run\\.log'`
+  - `write_stdin(session_id=6088, chars='')`
+- 要点:
+  - 当前存在活动进程:
+    - `python -u -m ours.refine_by_flux`
+    - `tee .../run.log`
+  - PTY 持续输出 `0/400 -> 400/400` 的 loss 进度条。
+  - 进度条之间还会出现 `0/32 -> 32/32` 的阶段性渲染过程。
+  - 这说明当前已经明显越过模型加载和 `ffmpeg` 阻塞, 正在持续执行 synthetic 主流程。
+
+### 来源2: 当前输出目录增量
+
+- 命令:
+  - 统计 `before_refine`、`after_refine`、`refine/render`、`refine/gen`、`refine/depth`
+- 要点:
+  - `before_refine/*.jpg = 100`
+  - `before_refine.mp4` 已存在
+  - 首次采样:
+    - `refine/render = 5`
+    - `refine/gen = 5`
+    - `refine/depth = 5`
+  - 间隔约 20 秒再次采样:
+    - `refine/render = 7`
+    - `refine/gen = 6`
+    - `refine/depth = 7`
+  - `after_refine` 当前仍为 `0`, 说明还没到收尾导出阶段。
+
+### 来源3: `generated_cams.jsonl` 与 `pose_jitter_log.jsonl`
+
+- 命令:
+  - 读取两个 jsonl 文件末尾几行
+- 要点:
+  - `generated_cams.jsonl` 当前 `lines=6`, 最后一条是 `plan_index=5`
+  - `pose_jitter_log.jsonl` 当前 `lines=7`, 最后一条是 `plan_index=6`
+  - 这说明:
+    - synthetic plan 至少已经推进到第 `6` 条附近
+    - 还在持续采样新的 jitter 相机
+
+### 来源4: `refine_resume_state.json`
+
+- 要点:
+  - 当前状态仍是:
+    - `status = synthetic_in_progress`
+    - `next_plan_index = 0`
+    - `latest_completed_plan_index = -1`
+  - 这份状态文件暂时没有跟随每个 plan 细粒度刷新。
+  - 因此本轮更可靠的真实进度来源是:
+    - PTY 实时输出
+    - `generated_cams.jsonl`
+    - `pose_jitter_log.jsonl`
+    - `refine/render|gen|depth` 的文件增长
+
+## 综合发现
+
+### 现象
+
+- rerun 进程仍然存活。
+- 产物目录正在持续增长。
+- `after_refine` 尚未开始生成。
+
+### 已验证结论
+
+- 这轮 rerun 已稳定进入 synthetic 主循环, 不是假活着。
+- 当前进度大约在 `plan_index 5~6 / 972` 附近。
+- `refine_resume_state.json` 目前不是这一阶段的最佳进度真相源。
+
+### 下一步判据
+
+- 继续观察 `generated_cams.jsonl` 与 `pose_jitter_log.jsonl` 是否继续前进。
+- 当 `after_refine/*.jpg` 开始出现时, 说明主循环已接近完成或进入收尾导出阶段。
+
+## [2026-04-01 01:00:43] [Session ID: codex-rerun-watch-20260401] 笔记: 基于代码语义与短时吞吐的剩余时长估算
+
+## 来源
+
+### 来源1: `ours/refine_by_flux.py` 主循环语义
+
+- 代码位置:
+  - `ours/refine_by_flux.py:355-450`
+- 要点:
+  - 每个 `plan_entry` 的执行顺序是:
+    - `refiner.render(...)`
+    - 写 `pose_jitter_log.jsonl`
+    - 落 `refine/render/*.jpg` 与 `refine/depth/*.jpg`
+    - `pipe(...)` 做 Flux 生成
+    - 落 `refine/gen/image_*.jpg`
+    - 写 `generated_cams.jsonl`
+    - `refiner.refine(...)`
+    - 达到保存条件时才会打印 `已保存恢复 checkpoint: plan=X/Y`
+  - 这说明:
+    - `generated_cams.jsonl` 与 `pose_jitter_log.jsonl` 是“进入或完成生成阶段”的证据
+    - 但严格完成一个 plan, 还要经过后面的 `refiner.refine(...)`
+    - 因而估时应优先参考 checkpoint 口径与短时吞吐, 不能只看 jsonl 行数
+
+### 来源2: 运行中实时日志
+
+- 要点:
+  - PTY 实时出现:
+    - `已保存恢复 checkpoint: plan=25/972`
+  - 这是当前最可靠的“至少完成到 25 条 plan”证据。
+
+### 来源3: 60 秒短时测速
+
+- 采样窗口:
+  - `start t=1774976355.9732862`
+  - `end t=1774976415.973589`
+- 要点:
+  - 60 秒内:
+    - `generated_cams.jsonl` 从 `plan_index=23` 推进到 `plan_index=25`
+    - `pose_jitter_log.jsonl` 从 `plan_index=24` 推进到 `plan_index=26`
+  - 保守理解:
+    - 近 1 分钟大约推进了 `2` 条 plan 左右
+    - 即约 `2 plans/min`
+
+### 来源4: 进程累计运行时长
+
+- 命令:
+  - `ps -p 89872 -o etime=,etimes=,pcpu=,pmem=,rss=,cmd=`
+- 要点:
+  - 当前进程已运行约:
+    - `15:02`
+    - `etimes=902`
+  - 当前 CPU 使用接近 `99.7%`
+  - 结合 checkpoint `plan=25/972`:
+    - 从启动到现在的平均完成速率大约也在 `1.6 ~ 2.0 plans/min` 量级
+
+## 综合发现
+
+### 现象
+
+- 当前至少已经完成 `25 / 972` 条 plan。
+- 最近 60 秒仍在持续前进, 没有卡死迹象。
+
+### 已验证结论
+
+- 按当前真实吞吐估算, 剩余 `947` 条 plan。
+- 若按 `2.0 plans/min` 计算:
+  - 约 `473.5 分钟`
+  - 约 `7.9 小时`
+- 若按稍乐观的 `2.2 plans/min` 计算:
+  - 约 `430.5 分钟`
+  - 约 `7.2 小时`
+- 若后续阶段继续维持更快节奏, 可能压到约 `6.3 小时`
+  - 这对应约 `2.5 plans/min`
+- 但当前更稳妥的口径仍应以 `7 ~ 8 小时` 为主。
+
+### 额外收尾时间
+
+- synthetic 主循环跑完后, 还需要:
+  - `refine/gen` 重建视频
+  - `after_refine` 固定视角导出
+  - `after_refine.mp4` 重建
+- 这部分通常还要额外十几分钟量级。
+
+### 当前建议口径
+
+- 对用户汇报:
+  - “如果后续速度基本保持当前水平, 剩余大约还要 `7 ~ 8 小时`, 保守按 `8 小时左右` 看更稳。”
+
+## [2026-04-01 01:08:37] [Session ID: codex-rerun-watch-20260401] 笔记: 当前 rerun 的 GPU 利用率呈现分段锯齿, 与主循环阶段切换一致
+
+## 来源
+
+### 来源1: `ours/refine_by_flux.py` 主循环
+
+- 代码位置:
+  - `ours/refine_by_flux.py:355`
+  - `ours/refine_by_flux.py:393`
+  - `ours/refine_by_flux.py:430`
+- 要点:
+  - 每条 synthetic plan 按严格串行顺序执行:
+    - `refiner.render(...)`
+    - 保存 `render/depth/masks`
+    - `pipe(...)` 做 Flux 生成
+    - 保存 `refine/gen`
+    - `refiner.refine(..., max_steps=refine_steps)`
+  - 当前不是“多 plan 并行”, 而是单 plan 串行。
+  - 所以 GPU 利用率天然会随着子阶段切换而波动。
+
+### 来源2: 当前实验配置
+
+- 文件:
+  - `exp_cfg/my5/flux_shinkai_museum_v2_35k_pose_jitter_train_test_x3_20260330.yaml`
+- 要点:
+  - `strength: 0.65`
+  - `refine_steps: 400`
+  - `refine_pipeline_offload_mode: model_cpu`
+  - `refine_camera_mode: pose_jitter`
+  - `base.yaml` 里 `num_inference_steps: 50`
+- 综合解释:
+  - `50 * 0.65 -> 32`
+  - 当前 PTY 里反复出现的 `0/32` 可以和 Flux 有效 denoise 步数对上。
+  - 反复出现的 `0/400` 对应每条 plan 的高斯 refine 训练步数。
+
+### 来源3: `configure_pipeline_offload(...)`
+
+- 文件:
+  - `ours/refine_pipeline_runtime.py`
+- 要点:
+  - `model_cpu` 模式会显式调用:
+    - `pipe.enable_model_cpu_offload(device='cuda')`
+  - 当前 `run.log` 也已确认本轮确实走了这条路径。
+  - 这意味着 Flux pipeline 的重模块会交给 offload hook 迁移和回收。
+
+### 来源4: `recon/refiner.py` 中的 render / refine 细节
+
+- 文件:
+  - `recon/refiner.py`
+- 要点:
+  - `render(...)` 在 `pose_jitter` 模式下会先采样候选相机, 再做渲染。
+  - 但本轮 `pose_jitter_log.jsonl` 里多数样本 `attempt_count=1` 且 `alpha_coverage=1.0`
+  - 说明“反复重试 jitter 候选”不是当前 GPU 低占用的主因。
+  - `refine(...)` 是典型的小粒度单视角循环:
+    - 每步只处理 `1` 个 camera
+    - 每步都有 `.to(device)`
+    - 每步都会 `loss.item()` 更新 `tqdm`
+  - 这类循环即便在用 GPU, 也不容易像大 batch 训练那样持续满载。
+
+### 来源5: GPU 动态采样
+
+- 采样1: 20 秒 `nvidia-smi`
+  - 观察到:
+    - 一段时间 `99% / 24.8GB / 530W+`
+    - 随后长段 `8%~10% / 24.8GB / 88~94W`
+    - 然后 `70%~78% / 1.7GB / 179~290W`
+    - 再次掉到 `8%~14%`
+- 采样2: 12 秒 `GPU + compute-app memory`
+  - 观察到:
+    - `00-07s`: `71% -> 99%`, compute app memory 约 `24.8GB`
+    - `08-11s`: `7%~8%`, compute app memory 仍约 `24.8GB`
+- 采样3: `nvidia-smi pmon -c 10 -s um`
+  - 观察到同一 PID `89872` 在 10 个采样点间出现:
+    - `sm=8`
+    - `sm=32`
+    - `sm=70`
+    - `sm=78`
+    - `sm=6`
+    - `sm=22`
+
+## 综合发现
+
+### 现象
+
+- 用户观察到 GPU 至少有很大一段时间低占用。
+- 动态采样证明这种感觉是有依据的, 不是错觉。
+
+### 当前主假设
+
+- 低占用主要来自“单 plan 串行多阶段”叠加“Flux model_cpu offload”。
+- 次要来源是 `refiner.refine()` 本身属于小 batch、高频同步的训练循环。
+
+### 备选解释
+
+- 还可能存在额外 CPU / 磁盘同步开销放大空转:
+  - `save_image(...)`
+  - `depth.cpu().numpy()`
+  - `PIL.Image.save(...)`
+  - jsonl 追加写入
+- 但从当前证据看, 它们更像次要项, 不是最主要项。
+
+### 已验证结论
+
+- 当前这条 rerun 正在交替执行:
+  - Flux 32 步生成
+  - 400 步高斯 refine
+  - 若干 CPU / I/O 边界操作
+- GPU 利用率锯齿化是当前执行模型本身的直接结果。
+- 其中最值得优先怀疑的性能放大器是:
+  - `refine_pipeline_offload_mode: model_cpu`
+- 所以“至少一半时间 GPU 没有被有效利用”这个判断, 作为现象描述是成立的。
+- 但更精确地说:
+  - 它不是单纯“GPU 闲着”
+  - 而是当前串行管线里存在大量非满载阶段和 offload / 同步边界。
+
+### 如果以后要优化, 优先级建议
+
+- 第一优先级:
+  - 重新评估 `model_cpu` offload 是否仍然必要
+- 第二优先级:
+  - 减少每条 plan 内的 CPU 边界与落盘频率
+- 第三优先级:
+  - 评估 `refiner.refine()` 是否能用更大的训练粒度或更少同步点
+
+## [2026-03-31 00:38:00] [Session ID: codex-refine-resume-speed-20260331] 笔记: refine 可恢复链与 fixed render 批量化已在 Flux/SDXL 两条脚本收口
+
+## 来源
+
+### 来源1: `/root/autodl-tmp/home/rais/FreeFix/ours/refine_by_flux.py`
+
+- 要点:
+  - `Flux` refine 现在会先读取 `refine_resume_state.json`
+  - 若状态已是 `complete` 且 `final_ckpt_path` 真实存在, 会直接退出, 不再重复加载 pipeline
+  - `before_refine / after_refine` 已改成 `render_fixed_rgb_batch(...) + rebuild_video_from_frame_dir(...)`
+  - synthetic 主循环会周期性写:
+    - rolling resume checkpoint
+    - `refine_resume_state.json`
+    - `refine/generated_cams.jsonl`
+
+### 来源2: `/root/autodl-tmp/home/rais/FreeFix/ours/refine_by_sdxl.py`
+
+- 要点:
+  - `SDXL` 已同步到和 `Flux` 同一套恢复路径
+  - 之前旧版 `writer` 直写 mp4 的逻辑已去掉
+  - 现在也改成:
+    - fixed-view batch RGB render
+    - synthetic jpg 序列作为真相源
+    - mp4 可重建
+    - resume state + rolling ckpt
+
+### 来源3: `/root/autodl-tmp/home/rais/FreeFix/recon/refiner.py` 与 `/root/autodl-tmp/home/rais/FreeFix/recon/refine_runtime.py`
+
+- 要点:
+  - `Refiner.rasterize_splats(...)` 原生支持 batched cameras
+  - `render_fixed_rgb_batch(...)` 会按分辨率分组后一次性 batch rasterize
+  - `refine_runtime.py` 负责:
+    - 恢复状态读写
+    - stale artifact 清理
+    - generated camera 恢复
+    - 由 jpg 序列重建 mp4
+
+### 来源4: 本轮静态验证
+
+- 命令:
+  - `python3 -m py_compile ours/refine_by_flux.py ours/refine_by_sdxl.py recon/refine_runtime.py recon/refiner.py tests/test_refine_runtime.py tests/test_pose_jitter_refine.py tests/test_refine_view_plan.py tests/test_refine_cli_paths.py`
+  - `.pixi/envs/default/bin/python -m unittest tests.test_refine_runtime tests.test_pose_jitter_refine tests.test_refine_view_plan tests.test_refine_cli_paths`
+- 关键输出:
+  - `py_compile` 通过
+  - `Ran 27 tests in 0.138s`
+  - `OK`
+  - 首轮单测前出现 `libgomp: Invalid value for environment variable OMP_NUM_THREADS`
+  - 现场确认当前 shell 的 `OMP_NUM_THREADS=0`
+  - 用 `OMP_NUM_THREADS=1` 重跑后, 单测无该报错并继续 `OK`
+
+## 综合发现
+
+### 现象
+
+- `Flux` 的恢复改造已经不是半截状态, 本轮补完后能完整表达:
+  - before fixed export
+  - synthetic loop
+  - after fixed export
+  - final checkpoint
+- `SDXL` 之前还停在旧逻辑, 现在已经对齐。
+
+### 已验证结论
+
+- 当前 refine 中断恢复的文件级链路已经形成闭环:
+  - resume state
+  - rolling resume checkpoint
+  - generated synthetic camera log
+  - stale artifact cleanup
+  - jpg -> mp4 rebuild
+- “render 图片能不能多个同时生成”这个问题, 当前更合理的答案不是 Python 多线程并发, 而是 fixed-view 走 batch rasterize。
+- synthetic 主循环仍不适合直接并行多个 plan:
+  - 因为每完成一个 plan, 都会调用 `refiner.refine(...)` 改写当前高斯状态
+  - 后一个 plan 的 render 语义依赖前一个 plan 之后的新状态
+
+### 当前边界
+
+- 这轮拿到的是静态证据和纯 Python 测试证据, 不是 GPU 动态 benchmark。
+- 当前机器缺少可用 NVIDIA driver, 因此没法在本机补出:
+  - fixed-view batch render 的真实耗时收益
+  - synthetic 主循环进一步优化方案的 GPU profile
+
+## [2026-03-31 01:05:00] [Session ID: codex-refine-resume-speed-20260331] 笔记: 用户 уточнение 为“jitter render 和 Flux gen 能否并行”
+
+## 来源
+
+### 来源1: GPU 状态
+
+- 命令:
+  - `nvidia-smi --query-gpu=name,memory.total,memory.free,utilization.gpu --format=csv,noheader`
+- 输出:
+  - `NVIDIA RTX PRO 6000 Blackwell Server Edition, 97887 MiB, 97251 MiB, 0 %`
+
+### 来源2: `/root/autodl-tmp/home/rais/FreeFix/ours/refine_by_flux.py`
+
+- 要点:
+  - 当前主循环顺序是:
+    - `refiner.render(...)`
+    - `pipe(...)`
+    - `refiner.refine(...)`
+  - `Flux gen` 明确依赖当轮 `render` 产出的:
+    - `rgb_to_refine`
+    - `masks`
+    - `alpha`
+
+### 来源3: `/root/autodl-tmp/home/rais/FreeFix/recon/refiner.py`
+
+- 要点:
+  - `refiner.render(...)` 不是纯 CPU 预处理
+  - 它会走 GS rasterization, 还会算 certainty / alpha / depth
+  - `refiner.refine(...)` 结束后会改写当前高斯状态
+
+## 综合发现
+
+### 现象
+
+- 现在机器已经有可用 GPU。
+- 但用户问的不是 fixed-view 导出, 而是 synthetic 主循环内部:
+  - jitter render
+  - Flux gen
+
+### 已验证结论
+
+- 同一条 plan 内, `render` 和 `Flux gen` 不能直接并行。
+  - 因为 `Flux gen` 的输入就是 `render` 的输出。
+- 如果想做“跨 plan 流水线”, 比如:
+  - 当前 plan 正在 `Flux gen`
+  - 同时去 render 下一条 plan
+  - 那在当前语义下也不应该直接这么做
+  - 因为下一条 plan 的 render 理应使用上一条 `refiner.refine(...)` 之后的新高斯状态
+  - 提前 render 会变成使用旧状态, 语义已经变化
+
+### 工程判断
+
+- 单卡场景下, 就算强行上 CUDA stream 并发:
+  - `render` 和 `Flux gen` 也都会抢同一张 GPU
+  - `Flux` 通常是更重的主负载
+  - 真实收益未必明显, 但显存和调度复杂度会显著上升
+- 真正更安全的重叠方向是:
+  - CPU 侧提前准备下一条 plan 的元数据
+  - 把磁盘写图放后台
+  - 而不是让两段 GPU 主计算硬并发
+
+### 值得单独定义的新模式
+
+- 如果后面真的要继续压榨吞吐, 可以考虑“snapshot/chunk pipeline”:
+  - 先冻结一份当前 splat snapshot
+  - 基于这份 snapshot 一次性 render 多条 jitter plan
+  - 再批量做 Flux gen
+  - 再统一进入 refine
+- 但这已经不是“纯优化”
+- 它会改变监督顺序和中间状态语义, 应该作为单独模式而不是默认行为
+
+## [2026-03-31 14:42:00] [Session ID: codex-rerun-flux-20260331] 笔记: rerun 当前阻塞于 Flux 模型来源不可用
+
+## 来源
+
+### 来源1: 新 rerun 的 `run.log`
+
+- 文件:
+  - `/root/autodl-tmp/home/rais/FreeFix/outputs/my5_colmap_fastgs_stable_35k_dense/flux_shinkai_museum_v2_pose_jitter_train_test_x3_20260330/run.log`
+- 要点:
+  - LPIPS 依赖 `alexnet` 已下载完成
+  - `Refiner` 已初始化完成
+  - 随后在 `resolve_flux_model_source(cfg)` 处报错退出:
+    - `FileNotFoundError: 配置里的 flux_model_path 不存在: /home/rais/.cache/modelscope/hub/models/black-forest-labs/FLUX___1-dev`
+
+### 来源2: 本机路径检查
+
+- 要点:
+  - `~/.cache/modelscope/hub/models/black-forest-labs/...` 下当前没有可用的本地 Flux snapshot
+  - 配置里写死的本地路径当前是失效路径
+
+### 来源3: 远端可达性探测
+
+- 命令:
+  - `curl -I -L https://huggingface.co/black-forest-labs/FLUX.1-dev/resolve/main/model_index.json`
+- 关键返回:
+  - `HTTP/2 401`
+  - `x-error-code: GatedRepo`
+  - `Access to model black-forest-labs/FLUX.1-dev is restricted`
+
+## 综合发现
+
+### 现象
+
+- rerun 不是还在慢慢跑
+- 而是已经在冷启动后退出
+- 当前输出目录里只有新的 `run.log`, 还没有真正进入 synthetic 主循环
+
+### 已验证结论
+
+- 当前 rerun 的直接阻塞不是 GPU、不是 `Refiner` 初始化、也不是 pose jitter
+- 而是 `Flux` 模型来源不可用:
+  - 本地配置路径不存在
+  - Hugging Face 官方 repo 又是 gated, 当前环境未认证
+
+### 当前边界
+
+- 在没有有效本地 Flux snapshot 或 Hugging Face 访问凭据前, 当前实验无法继续推进到 `FluxPipeline.from_pretrained(...)`
+
 ### 现象
 
 - `FastGS` 的高斯内容本身和 `FreeFix` 的 SH 训练线是同类数据。
@@ -172,6 +761,126 @@
 
 - 这次 bridge/refine 入口仍然是面向 `app_opt=false` 的 SH 训练线。
 - “转过来的 ckpt 做 refine” 依然需要目标场景的原始图片和 COLMAP 目录, 因为 FreeFix 仍要自己建 parser、相机和归一化矩阵。
+
+## [2026-03-30 00:59:18] [Session ID: 019d3934-ae28-7011-acaa-2f5fa77d5f39] 笔记: 多 split / 多 jitter refine 代码收口后的静态结论
+
+## 来源
+
+### 来源1: `/root/autodl-tmp/home/rais/FreeFix/ours/refine_by_flux.py`
+
+- 要点:
+  - `Flux` 入口已经切到:
+    - `build_real_train_pool(...)`
+    - `build_refine_view_plan(...)`
+  - synthetic supervise 循环已按 `plan_index / source_split / source_repeat_index / image_id` 跑通整条链路
+
+### 来源2: `/root/autodl-tmp/home/rais/FreeFix/ours/refine_by_sdxl.py`
+
+- 要点:
+  - 在本轮之前, `SDXL` 仍然保留旧的 range-based refine 循环
+  - 本轮已对齐到和 `Flux` 同一套 plan helper
+  - `pose_jitter_log.jsonl` 也已补齐:
+    - `plan_index`
+    - `source_repeat_index`
+    - `image_id`
+
+### 来源3: `/root/autodl-tmp/home/rais/FreeFix/exp_cfg/base.yaml` 与 `/root/autodl-tmp/home/rais/FreeFix/README.md`
+
+- 要点:
+  - 新配置键已经正式补入:
+    - `refine_train_splits`
+    - `refine_camera_source_splits`
+    - `pose_jitter_views_per_source`
+  - 文档中已明确:
+    - `before_refine / after_refine` 仍走固定对比视角
+    - 多 split + 多 jitter 会改变 benchmark 语义
+
+### 来源4: 动态验证
+
+- 命令:
+  - `python3 -m py_compile ours/refine_by_flux.py ours/refine_by_sdxl.py ours/refine_run_schedule.py recon/refine_view_plan.py recon/refiner.py tests/test_pose_jitter_refine.py tests/test_refine_view_plan.py`
+  - `.pixi/envs/default/bin/python -m unittest tests.test_pose_jitter_refine tests.test_refine_view_plan tests.test_refine_cli_paths`
+- 关键输出:
+  - `py_compile` 通过
+  - `Ran 16 tests`
+  - `OK`
+
+## 综合发现
+
+### 现象
+
+- `Flux` 和 `SDXL` 现在已经共用同一套多 split / 多 jitter 调度语义
+- 计划展开和 pose jitter 日志字段, 已经有轻量测试锁住
+
+### 已验证结论
+
+- 用户要求的这条语义已经落成配置能力:
+  - `refine_train_splits: [train, test]`
+  - `refine_camera_source_splits: [train, test]`
+  - `pose_jitter_views_per_source: 3`
+- 当前还没验证的只剩动态长跑层面:
+  - 真实场景里 plan 数量是否与预期一致
+  - 长跑结束后 checkpoint 是否稳定落盘
+
+### 下一步最小验证
+
+- 先对 `my5` 实景把:
+  - train/test 镜头数
+  - synthetic plan 总数
+  - checkpoint 输出路径
+- 做成可观察证据
+- 然后再起正式任务
+
+## [2026-03-30 01:05:37] [Session ID: 019d3934-ae28-7011-acaa-2f5fa77d5f39] 笔记: `my5` 多 split / 多 jitter smoke 的动态证据
+
+## 来源
+
+### 来源1: 真实 `Refiner` smoke
+
+- 命令:
+  - `timeout 300s .pixi/envs/default/bin/python - <<'PY' ...`
+- 要点:
+  - 读取正式配置:
+    - `/root/autodl-tmp/home/rais/FreeFix/exp_cfg/my5/flux_shinkai_museum_v2_35k_pose_jitter_train_test_x3_20260330.yaml`
+  - 实际初始化 `Refiner`
+  - 实际构造:
+    - `build_real_train_pool(...)`
+    - `build_refine_view_plan(...)`
+  - 实际渲染第一条 pose jitter plan
+  - 实际执行 `refiner.save(...)`
+
+### 来源2: 关键输出
+
+- `[Parser] 324 images, taken by 1 cameras.`
+- `train_len: 283`
+- `test_len: 41`
+- `real_train_pool_count: 324`
+- `synthetic_plan_count: 972`
+- `repeats_per_source: 3`
+- `last_plan.source_split: test`
+- `last_plan.source_index: 40`
+- `last_plan.source_repeat_index: 2`
+- `saved_ckpt_exists: true`
+
+## 综合发现
+
+### 现象
+
+- 新配置并不是“纸面上看起来会展开 972 条”
+- 它已经在真实 `my5` 数据上被动态算出了 `972`
+
+### 已验证结论
+
+- 当前 `my5` 的 `train + test` 总镜头数就是 `324`
+- 每个基镜头抖 `3` 个视角后, synthetic supervise 总数就是 `972`
+- `Refiner.save()` 已经能在真实输出目录下成功落盘 probe checkpoint
+
+### 仍未验证部分
+
+- Flux 正式长跑是否会:
+  - 跑完整个 `972` synthetic plan
+  - 最终也保存正式 refined checkpoint
+- 这仍需要正式任务的动态日志来继续确认
 
 ## [2026-03-27 18:20:00] [Session ID: codex-fastgs-one-shot-wrapper] 笔记: one-shot wrapper 的参数契约与验证结果
 
@@ -1139,3 +1848,369 @@
   - 更强 3x jitter 正式任务已经启动并在后台运行
   - 第一条实际采样已明显变大
   - 这轮更符合“不要太贴近原镜头”的目标
+
+## [2026-03-29 15:16:55] [Session ID: 019d3934-ae28-7011-acaa-2f5fa77d5f39] 笔记: stronger jitter 的首批实际采样已进入 4cm~6cm / 4~6 度量级
+
+## 来源
+
+### 来源1: 当前运行状态
+
+- 进程:
+  - `PID 331670`
+- 日志:
+  - `/root/autodl-tmp/home/rais/FreeFix/outputs/my5_colmap_fastgs_stable_35k_dense/flux_shinkai_museum_v2_pose_jitter_train_100_stronger_20260329.run.log`
+- 当前已落盘:
+  - `refine/render`: 16 张
+  - `refine/gen`: 15 张
+
+### 来源2: 首批 stronger `pose_jitter_log.jsonl`
+
+- frame 0:
+  - `trans = [-0.0434, -0.0336, 0.0120]`
+  - `rots = [1.026, 2.578, -0.513]`
+- frame 2:
+  - `trans = [0.0301, 0.0600, 0.0460]`
+  - `rots = [4.197, -4.093, 2.500]`
+- frame 4:
+  - `trans = [-0.0031, 0.0107, -0.0600]`
+  - `rots = [-2.509, -3.789, 0.582]`
+- frame 8:
+  - `trans = [0.0231, 0.0499, -0.0051]`
+  - `rots = [-2.781, -6.000, 0.034]`
+
+### 来源3: 前几张输出亮度
+
+- `refine/render/000~005.jpg`
+  - 均值约 `0.500 ~ 0.513`
+- `refine/gen/image_000~005.jpg`
+  - 均值约 `0.501 ~ 0.512`
+- 当前没有重新出现黑帧
+
+## 综合发现
+
+### 现象
+
+- stronger 这轮的采样幅度已经明显进入:
+  - `4cm ~ 6cm` 量级平移
+  - `4 ~ 6` 度量级旋转
+- 这比上一轮常见的:
+  - `0.003 ~ 0.019m`
+  - `<= 2` 度
+- 明显更强
+
+### 当前结论
+
+- 当前 stronger 配置已经真正达到了“明显离开原镜头”的目标
+- 同时首批 `render / gen` 仍保持正常亮度
+- 所以这轮参数目前看是更合适的中强档位
+
+## [2026-03-29 23:20:17] [Session ID: 019d3934-ae28-7011-acaa-2f5fa77d5f39] 笔记: stronger 长跑当前不是卡死, 而是中段落盘节奏偏慢
+
+## 来源
+
+### 来源1: 两次间隔 35 秒的动态复查
+
+- 第一次观察:
+  - `refine/render`: `19` 张
+  - `refine/gen`: `18` 张
+  - 最新文件时间:
+    - `render/018.jpg @ 2026-03-29 15:18:46 UTC`
+    - `gen/image_017.jpg @ 2026-03-29 15:18:42 UTC`
+- 35 秒后再次观察:
+  - `refine/render`: `21` 张
+  - `refine/gen`: `20` 张
+  - 最新文件时间:
+    - `render/020.jpg @ 2026-03-29 15:19:57 UTC`
+    - `gen/image_019.jpg @ 2026-03-29 15:19:53 UTC`
+
+### 来源2: 进程状态
+
+- `ps -p 331670 -o pid,etime,pcpu,pmem,stat,cmd`
+- 结果:
+  - 进程仍在
+  - `STAT=Rsl`
+  - `%CPU` 约 `110`
+
+### 来源3: 最新落盘图像亮度抽查
+
+- `refine/render/014~018.jpg`
+  - 均值约 `0.502 ~ 0.515`
+- `refine/gen/image_013~017.jpg`
+  - 均值约 `0.502 ~ 0.514`
+- 当前未见黑帧回潮
+
+## 综合发现
+
+### 现象
+
+- 从单次快照看, 输出目录一度像是停在 `19/18` 帧附近
+- 这会让人怀疑它是不是“进程活着, 但实际卡住了”
+
+### 当前假设
+
+- 候选假设A:
+  - 任务只是中段落盘节奏偏慢, 但仍在推进
+- 候选假设B:
+  - 任务卡在某个固定帧位, 只是 CPU 仍然忙
+
+### 验证计划
+
+- 不靠单次快照下结论
+- 间隔 35 秒重复统计:
+  - 文件数量
+  - 最新文件时间
+  - 进程状态
+
+### 当前结论
+
+- 候选假设B 当前被动态证据推翻
+- stronger 这轮现在不是“静默卡死”
+- 更准确的描述是:
+  - 中间 `refine/render + gen` 阶段仍在持续推进
+  - 只是节奏明显比最开始感知到的要慢
+
+## [2026-03-30 00:44:35] [Session ID: 019d3934-ae28-7011-acaa-2f5fa77d5f39] 笔记: stronger 正式 run 已完成, jitter 足够强, 但 fixed-view 最终变化偏温和
+
+## 来源
+
+### 来源1: 运行完成状态
+
+- `pgrep -af 'flux_shinkai_museum_v2_35k_pose_jitter_train_100_stronger_20260329.yaml'`
+  - 无结果
+- 输出目录完整性:
+  - `before_refine`: `100` 张
+  - `refine/render`: `100` 张
+  - `refine/gen`: `100` 张
+  - `after_refine`: `100` 张
+- 时间戳:
+  - run log: `2026-03-29 16:08:29 UTC`
+  - `pose_jitter_log.jsonl`: `2026-03-29 16:07:53 UTC`
+
+### 来源2: `pose_jitter_log.jsonl` 汇总
+
+- 样本数:
+  - `100`
+- fallback:
+  - `0`
+- 平移范数:
+  - 均值 `0.0476`
+  - 中位数 `0.0481`
+  - 最大值 `0.0850`
+- 旋转范数:
+  - 均值 `4.7157`
+  - 中位数 `4.6859`
+  - 最大值 `9.4660`
+- 单轴绝对值:
+  - `|trans|` 平均 `0.0235`, `p95=0.0600`, `max=0.0600`
+  - `|rot|` 平均 `2.3980`, `p95=5.8214`, `max=6.0000`
+- 平移最大的几帧:
+  - `099`: `trans_norm=0.0850`
+  - `069`: `trans_norm=0.0849`
+  - `002`: `trans_norm=0.0814`
+
+### 来源3: 中间 `render -> gen` 变化幅度
+
+- `gen-vs-render mae`
+  - 均值 `0.0157`
+  - 中位数 `0.0155`
+  - 最大值 `0.0246`
+- 亮度均值:
+  - `render`: `0.5016`
+  - `gen`: `0.5020`
+- 说明:
+  - Flux 图生图不是“几乎没改”
+  - 中间 synthetic supervise 确实对 jitter 渲染做了可见改写
+
+### 来源4: fixed-view `before -> after` 变化幅度
+
+- `before-vs-after mae`
+  - 均值 `0.0116`
+  - 中位数 `0.0106`
+  - 最大值 `0.0199`
+- 亮度均值:
+  - `before`: `0.5017`
+  - `after`: `0.5038`
+- 阈值统计:
+  - `mae >= 0.010`: `59/100`
+  - `mae >= 0.012`: `39/100`
+  - `mae >= 0.015`: `17/100`
+  - `mae >= 0.018`: `3/100`
+- 变化最大的帧集中在:
+  - `042 ~ 046`
+
+### 来源5: 肉眼抽样拼图
+
+- 抽样拼图:
+  - `eval_montage_20260330.jpg`
+  - `eval_before_after_topdiff_20260330.jpg`
+- 观察:
+  - 中间 `render / gen` 明显已经不是原固定镜头
+  - `after` 相比 `before` 主要表现为:
+    - 略提亮
+    - 反射和边缘有轻微整理
+    - 没有重新出现黑帧
+  - 但 fixed-view 最终变化并不激进, 更像温和修整
+
+## 综合发现
+
+### 现象
+
+- stronger 这轮已经完整跑完
+- 中间 pose jitter 和 Flux 生成都产生了可见改动
+- 但最终固定视角 `after_refine` 相比 `before_refine` 的变化幅度明显更克制
+
+### 当前假设
+
+- 候选假设A:
+  - 当前参数已经足够把 synthetic supervise 拉离原镜头
+  - 但 3D 优化写回固定视角后的投影改动仍偏保守
+- 候选假设B:
+  - 当前 fixed-view 变化小, 可能是因为真正有效的监督增量有限
+  - 也可能是这组场景本身已经接近收敛上限
+
+### 当前结论
+
+- 可以确认的部分:
+  - stronger jitter 已达到“明显离开原镜头”的目标
+  - 中间 `render -> gen` 有实质改动
+  - 最终 fixed-view 没黑、没崩、没出现明显灾难性退化
+- 当前更准确的评价口径:
+  - 这轮更像“安全的中强档 refine”
+  - 不是“final fixed-view 出现大幅重塑”的那种强刺激结果
+
+### 未决观察
+
+- 现象:
+  - 可视化产物和 `tb_refine` 事件文件都落盘了
+  - 但按代码应保存到 `outputs/my5_colmap_fastgs_stable_35k_dense/ckpts/ckpt_flux_shinkai_museum_v2_pose_jitter_train_100_stronger_20260329.pt` 的最终 checkpoint 当前不存在
+- 当前还缺的证据:
+  - 无 traceback
+  - 无显式 save 日志
+- 因此现在只能说:
+  - 图像评估已完成
+  - 但模型持久化是否完整成功, 目前仍是未决项
+
+## [2026-03-31 00:00:00] [Session ID: 019d436e-9bf6-7313-ab99-623578ee4ecf] 笔记: `flux_shinkai_museum_v2_pose_jitter_train_test_x3_20260330` 缺少 `after_refine.mp4`
+
+## 来源
+
+### 来源1: 静态代码路径
+
+- 文件: [ours/refine_by_flux.py](/root/autodl-tmp/home/rais/FreeFix/ours/refine_by_flux.py)
+- 要点:
+  - 代码会初始化 `after_refine_writer = imageio.get_writer(...)`
+  - 只有在 refine 主循环全部完成后, 才会进入:
+    - fixed-view `after_refine/*.jpg` 渲染
+    - `after_refine_writer.close()`
+    - `refiner.save(name=f"ckpt_{cfg.exp_name}")`
+  - 所以 `after_refine.mp4` 不是额外工具才会生成的, 它本来就是主流程的一部分
+
+### 来源2: 正式 run 日志
+
+- 文件: [run.log](/root/autodl-tmp/home/rais/FreeFix/outputs/my5_colmap_fastgs_stable_35k_dense/flux_shinkai_museum_v2_pose_jitter_train_test_x3_20260330/run.log)
+- 要点:
+  - 规范化回车后的日志里能看到:
+    - `输出目录与 writer 初始化完成`
+    - `真实训练池 ... count=324`
+    - `synthetic plan ... count=972`
+  - 但没有看到:
+    - `开始保存 refine checkpoint`
+    - `refine checkpoint 已保存`
+  - 也没有 `Traceback` / `Exception` / `Killed`
+
+### 来源3: 实际落盘产物
+
+- 目录: [outputs/my5_colmap_fastgs_stable_35k_dense/flux_shinkai_museum_v2_pose_jitter_train_test_x3_20260330](/root/autodl-tmp/home/rais/FreeFix/outputs/my5_colmap_fastgs_stable_35k_dense/flux_shinkai_museum_v2_pose_jitter_train_test_x3_20260330)
+- 要点:
+  - `before_refine/` 有 `100` 张, `before_refine.mp4` 已存在
+  - `refine/render/` 有 `327` 张
+  - `refine/gen/` 有 `327` 张
+  - `refine/depth/` 有 `327` 张
+  - `pose_jitter_log.jsonl` 有 `327` 行, 最后一条是 `plan_index=326`
+  - `after_refine/` 为空
+  - 没有 `after_refine.mp4`
+  - `outputs/my5_colmap_fastgs_stable_35k_dense/ckpts/` 下也没有 `ckpt_flux_shinkai_museum_v2_pose_jitter_train_test_x3_20260330.pt`
+
+### 来源4: watcher 日志
+
+- 文件: [eval_after_refine.log](/root/autodl-tmp/home/rais/FreeFix/outputs/my5_colmap_fastgs_stable_35k_dense/flux_shinkai_museum_v2_pose_jitter_train_test_x3_20260330/eval_after_refine.log)
+- 要点:
+  - 当前只看到了 watcher 反复打印 `refine pid=373665 still running`
+  - 没有真正进入 `ours.evaluation` 后的评估输出
+  - 这说明它不能被当成“refined 结果已经评估完成”的证据
+
+## 综合发现
+
+### 现象
+
+- 这次 run 不是“只少导出了一个 mp4”
+- 它实际上没有走到完整收尾阶段
+
+### 当前结论
+
+- 已验证结论:
+  - `after_refine.mp4` 本来就该由主流程自动生成
+  - 这次之所以没有, 是因为 run 只完成了 `972` 个 synthetic plan 中的前 `327` 个
+  - 它没有进入 `after_refine` fixed-view 渲染阶段
+  - 也没有走到 refined checkpoint 保存阶段
+
+### 仍未确认的部分
+
+- 进程为什么停在 `plan_index=326` 附近, 当前还不能下最终根因结论
+- 目前只能保守表述为:
+  - 这不是“代码里没有 after 输出”
+  - 而是“本次正式 run 中途终止或未完整收尾”
+
+## [2026-03-31 00:40:00] [Session ID: 019d436e-9bf6-7313-ab99-623578ee4ecf] 笔记: 当前代码不支持从中间 synthetic plan 断点继续
+
+## 来源
+
+### 来源1: 进程状态
+
+- `ps -ef` 已确认当前没有活着的:
+  - `ours.refine_by_flux`
+  - `flux_shinkai_museum_v2_pose_jitter_train_test_x3_20260330`
+
+### 来源2: `Refiner` 的恢复语义
+
+- 文件: [recon/refiner.py](/root/autodl-tmp/home/rais/FreeFix/recon/refiner.py)
+- 文件: [recon/refine_runtime.py](/root/autodl-tmp/home/rais/FreeFix/recon/refine_runtime.py)
+- 要点:
+  - `load_ckpt_path` 只负责加载一个已有高斯 checkpoint
+  - `resume_load_step` / `strategy_resume_step` 只是在 densification strategy 里恢复“原训练时间轴步数”
+  - 它不是 synthetic plan 的进度恢复
+  - 也不会恢复:
+    - 已经跑到哪个 `plan_index`
+    - 已生成的 `refine/gen/*.jpg`
+    - 已经写回多少轮 `refiner.refine(...)`
+
+### 来源3: 当前输出目录状态
+
+- 当前只有:
+  - `before_refine/*.jpg`
+  - `refine/render/*.jpg`
+  - `refine/gen/*.jpg`
+  - `pose_jitter_log.jsonl`
+- 但没有:
+  - 当前 run 的 refined checkpoint
+  - 中途 checkpoint
+  - “从第几个 plan 继续”的状态文件
+
+## 综合发现
+
+### 已验证结论
+
+- 当前这版代码不能从 `plan_index=326` 原地继续
+- 原因不是一句“没开 resume 参数”那么简单
+- 而是恢复所需的三个条件都缺:
+  - 没有活着的进程
+  - 没有中途 checkpoint
+  - 没有 synthetic progress 恢复机制
+
+### 当前最准确的口径
+
+- 对当前这次 run 来说:
+  - 不能“继续跑”
+  - 只能:
+    - 从初始 checkpoint 重新跑
+    - 或者先改代码, 做出真正的断点恢复能力后, 再用于后续运行
