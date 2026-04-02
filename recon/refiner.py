@@ -18,6 +18,7 @@ import numpy as np
 from recon.pose_jitter import (
     build_local_camera_transform,
     coerce_pose_jitter_triplet,
+    compute_neighbor_average_radius,
     sample_bounded_pose_jitter,
     select_pose_jitter_candidate,
 )
@@ -55,6 +56,9 @@ class Refiner:
         pose_jitter_max_attempts: int = 4,
         pose_jitter_alpha_threshold: float = 0.05,
         pose_jitter_min_alpha_coverage: float = 0.05,
+        pose_jitter_trans_radius_mode: str = "disabled",
+        pose_jitter_neighbor_window: int = 1,
+        pose_jitter_neighbor_radius_scale: float = 1.0,
     ):
         self.cfg = cfg
         self.device = "cuda"
@@ -118,6 +122,15 @@ class Refiner:
         self.pose_jitter_max_attempts = max(1, int(pose_jitter_max_attempts))
         self.pose_jitter_alpha_threshold = float(np.clip(pose_jitter_alpha_threshold, 0.0, 1.0))
         self.pose_jitter_min_alpha_coverage = float(np.clip(pose_jitter_min_alpha_coverage, 0.0, 1.0))
+        self.pose_jitter_trans_radius_mode = str(pose_jitter_trans_radius_mode).strip().lower()
+        if self.pose_jitter_trans_radius_mode not in {"disabled", "neighbor_average_radius"}:
+            raise ValueError(
+                "pose_jitter_trans_radius_mode 只支持 disabled / neighbor_average_radius, "
+                f"当前得到: {pose_jitter_trans_radius_mode}"
+            )
+        self.pose_jitter_neighbor_window = max(0, int(pose_jitter_neighbor_window))
+        self.pose_jitter_neighbor_radius_scale = max(0.0, float(pose_jitter_neighbor_radius_scale))
+        self.pose_jitter_pose_sequence_cache: Dict[Tuple[str, bool], List[Tensor]] = {}
 
         # Load the refine dataset
         # self.refine_dataset = Refine_Dataset(os.path.join(cfg.result_dir, "to_refine"))
@@ -414,6 +427,71 @@ class Refiner:
         dataset, _ = self._resolve_render_dataset(split)
         return dataset[idx]
 
+    def _load_camera_pose_only(
+        self,
+        idx: int,
+        *,
+        split: Optional[str] = None,
+        trans: bool = True,
+    ) -> tuple[Tensor, str]:
+        """只读取指定镜头的相机位姿, 避免为了邻居分析额外加载图片。"""
+        dataset, split_kind = self._resolve_render_dataset(split)
+        parser_index = int(dataset.indices[idx])
+        c2w = torch.from_numpy(dataset.parser.camtoworlds[parser_index]).float()
+
+        if trans and split_kind != "train":
+            c2w = c2w @ build_local_camera_transform(
+                self.test_trans,
+                self.test_rots,
+                device=c2w.device,
+                dtype=c2w.dtype,
+            )
+
+        return c2w, split_kind
+
+    def _resolve_pose_jitter_trans_radius_limit(
+        self,
+        *,
+        source_index: int,
+        source_split: Optional[str],
+        trans: bool,
+        base_c2w: Tensor,
+    ) -> Optional[float]:
+        """按当前策略解析 jitter 平移半径上限。"""
+        del base_c2w
+        if self.pose_jitter_trans_radius_mode != "neighbor_average_radius":
+            return None
+        if self.pose_jitter_neighbor_window < 1:
+            return None
+
+        _, split_kind = self._resolve_render_dataset(source_split)
+        cache_key = (split_kind, bool(trans))
+        c2w_sequence = self.pose_jitter_pose_sequence_cache.get(cache_key)
+        if c2w_sequence is None:
+            dataset, _ = self._resolve_render_dataset(split_kind)
+            c2w_sequence = []
+            for dataset_index in range(len(dataset)):
+                c2w, _ = self._load_camera_pose_only(
+                    dataset_index,
+                    split=split_kind,
+                    trans=trans,
+                )
+                c2w_sequence.append(c2w)
+            self.pose_jitter_pose_sequence_cache[cache_key] = c2w_sequence
+
+        neighbor_average_radius = compute_neighbor_average_radius(
+            c2w_sequence,
+            source_index=source_index,
+            neighbor_window=self.pose_jitter_neighbor_window,
+        )
+        if neighbor_average_radius is None:
+            return None
+
+        scaled_radius = neighbor_average_radius * self.pose_jitter_neighbor_radius_scale
+        if scaled_radius <= 0.0:
+            return None
+        return float(scaled_radius)
+
     def _load_render_sample(
         self,
         idx: int,
@@ -615,6 +693,12 @@ class Refiner:
                 split=source_split,
                 trans=trans,
             )
+            trans_radius_limit = self._resolve_pose_jitter_trans_radius_limit(
+                source_index=request_index,
+                source_split=source_split,
+                trans=trans,
+                base_c2w=base_c2w,
+            )
 
             # 先围绕 base camera 采样多个局部扰动候选。
             # 只有通过 alpha 覆盖率检查的候选, 才允许继续进入 synthetic supervise。
@@ -624,6 +708,7 @@ class Refiner:
                     self.pose_jitter_trans_max,
                     self.pose_jitter_rot_sigma_deg,
                     self.pose_jitter_rot_max_deg,
+                    trans_radius_max=trans_radius_limit,
                 )
                 jittered_c2w = base_c2w @ build_local_camera_transform(
                     sampled_trans,
@@ -634,6 +719,9 @@ class Refiner:
                 return jittered_c2w, {
                     "pose_jitter_trans": list(sampled_trans),
                     "pose_jitter_rots": list(sampled_rots),
+                    "pose_jitter_trans_radius_mode": self.pose_jitter_trans_radius_mode,
+                    "pose_jitter_trans_radius_limit": trans_radius_limit,
+                    "pose_jitter_neighbor_window": self.pose_jitter_neighbor_window,
                 }
 
             def render_candidate(candidate_c2w: Tensor):

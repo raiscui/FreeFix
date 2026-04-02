@@ -67,9 +67,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--refine-backend",
-        choices=["flux", "sdxl"],
+        choices=["flux", "sdxl", "kontext"],
         default="flux",
-        help="选择 refine 后端。默认 flux。",
+        help="选择 refine 后端。可选 flux / sdxl / kontext。默认 flux, `kontext` 只是新增可选项, 不是默认替代。",
     )
     parser.add_argument(
         "--bridge-output",
@@ -151,6 +151,8 @@ def get_refine_module_name(backend: str) -> str:
         return "ours.refine_by_flux"
     if backend == "sdxl":
         return "ours.refine_by_sdxl"
+    if backend == "kontext":
+        return "ours.refine_by_kontext"
     raise ValueError(f"不支持的 refine backend: {backend}")
 
 

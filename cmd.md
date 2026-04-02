@@ -640,3 +640,50 @@ PYTHONPATH=/root/autodl-tmp/home/rais/FreeFix \
   - `outputs/my4_fullcolmap_v2_stable_12k_dense/flux_shinkai_museum_v2/after_refine.mp4`
   - `outputs/my4_fullcolmap_v2_stable_12k_dense/flux_shinkai_museum_v2/refine/gen.mp4`
   - `outputs/my4_fullcolmap_v2_stable_12k_dense/ckpts/ckpt_flux_shinkai_museum_v2.pt`
+
+
+## 配置里 怎么 改 才是用 refine_by_kontext
+
+
+• 当前实现里, 只改配置文件还不够。
+
+  真正决定走 refine_by_kontext 的开关, 现在在命令行参数这里:
+  ours/run_fastgs_refine.py
+
+  你有两种用法。
+
+  1. 用 wrapper 跑
+  这时要显式加:
+
+  --refine-backend kontext
+
+  例如:
+
+  python ours/run_fastgs_refine.py \
+    --ckpt-path /path/to/ckpt_30000.pth \
+    --colmap-path /path/to/colmap_scene \
+    --exp-cfg exp_cfg/<scene>/your.yaml \
+    --refine-backend kontext
+
+  2. 直接跑 Kontext 入口
+  这时不用配 backend 参数, 直接调用:
+  ours/refine_by_kontext.py
+
+  python -m ours.refine_by_kontext --exp_cfg exp_cfg/<scene>/your.yaml
+
+  配置文件里要改的, 是 Kontext 自己的参数
+  这些键现在在 exp_cfg/base.yaml:
+
+  kontext_model_path: /path/to/FLUX.1-Kontext-dev
+  kontext_strength: 0.5
+  kontext_num_inference_steps: 50
+  kontext_guidance_scale: 2.5
+
+  最关键的是:
+
+  kontext_model_path: /你的/FLUX.1-Kontext-dev/目录
+
+  注意两点:
+
+  - 不要把 kontext_model_path 指到 FLUX.1-dev
+  - flux_model_path 还是给旧的 flux backend 用的, 两个不要混

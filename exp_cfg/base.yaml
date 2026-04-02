@@ -11,9 +11,12 @@ refine_camera_mode: fixed # fixed 保持现有视角; pose_jitter 只在中间 s
 refine_camera_source_split: train # 旧模式下 pose_jitter 围绕哪组真实相机采样。默认不要直接复用 benchmark eval split
 refine_train_splits: null # 新模式: null 保持旧的 train_start_idx/train_end_idx; 可设为 [train, test] 或 all, 表示把这些 split 的全部真实镜头纳入真实监督池, 会污染 benchmark
 refine_camera_source_splits: null # 新模式: null 保持旧的 refine_start_idx/refine_end_idx + refine_camera_source_split; 可设为 [train, test] 或 all, 表示把这些 split 的全部镜头都作为 synthetic source pool
-pose_jitter_views_per_source: 1 # 每个基镜头展开多少个 jitter synthetic 视角, 例如 train+test 共 324 镜头时, 设为 3 就会得到 972 条 synthetic plan
+pose_jitter_views_per_source: 1 # 支持正整数或 `a/b` 分数。整数表示每个基镜头重复多少次; 例如 3 -> train+test 共 324 镜头时会得到 972 条 synthetic plan。分数表示按固定比例稳定抽样 source pool; 例如 `1/2` 表示每 2 个 source 保留 1 个
 pose_jitter_trans_sigma: [ 0.02, 0.02, 0.02 ] # meters, 相机局部 xyz 平移高斯采样标准差
 pose_jitter_trans_max: [ 0.05, 0.05, 0.05 ] # meters, 平移硬上限, 超过后会被裁剪
+pose_jitter_trans_radius_mode: disabled # disabled 保持旧行为; neighbor_average_radius 表示用相邻镜头平均距离作为平移半径 cap
+pose_jitter_neighbor_window: 1 # 1 表示“前一个 + 后一个”; 2 表示“前后各两个”
+pose_jitter_neighbor_radius_scale: 1.0 # 对相邻镜头平均半径再乘一个缩放系数, 便于保守或放大
 pose_jitter_rot_sigma_deg: [ 1.5, 1.5, 1.5 ] # degrees, 相机局部 xyz 欧拉角高斯采样标准差
 pose_jitter_rot_max_deg: [ 4.0, 4.0, 4.0 ] # degrees, 旋转硬上限, 超过后会被裁剪
 pose_jitter_max_attempts: 4 # 连续采样失败时最多重试次数, 用完后回退到 base camera
@@ -25,6 +28,12 @@ c_scheduler: [ 0.3, 0.9, 1.0 ]
 negative_prompt: "blurry, low quality, foggy, overall gray, subtitles, incomplete, ghost image, too close to camera"
 strength: 0.5
 num_inference_steps: 50
+kontext_model_path: null # Kontext 可选 backend 的独立模型路径; 留空时优先尝试本地缓存, 再回退官方 repo id
+kontext_prompt: null # Kontext 可单独覆盖主 prompt; 留空时回退 `prompt`, 并自动追加“修瑕疵 + 保持当前视角/结构”的修复指令
+kontext_negative_prompt: null # Kontext 可单独覆盖 negative prompt; 适合压制“额外细节 / 乱纹理 / 过锐化”而不复用主链的泛化增强口径
+kontext_strength: 0.5 # Kontext 默认沿用主 refine strength, 但这里可以单独覆盖
+kontext_num_inference_steps: 50 # Kontext 默认沿用主 refine 步数, 可在这里单独覆盖
+kontext_guidance_scale: 2.5 # Kontext 官方示例更接近 2.5, 与现有 flux 私有 pipeline 的 3.5 不完全等价
 guide_ratio: 1.0
 warp_ratio: 0.5
 refine_max: 5

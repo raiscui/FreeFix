@@ -1,0 +1,5 @@
+{
+  "last_turn_at": "2026-04-02T05:33:31.996Z",
+  "turn_count": 3,
+  "last_agent_output": "已经把 `pose_jitter_views_per_source` 做成“整数重复 + 分数抽样”双语义了。\n\n核心改动在 [recon/refine_view_plan.py](/root/aut"
+}

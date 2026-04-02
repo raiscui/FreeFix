@@ -44,6 +44,80 @@ def coerce_named_splits(
     return tuple(deduped)
 
 
+def coerce_views_per_source_fraction(
+    raw_value: Any,
+    *,
+    name: str = "pose_jitter_views_per_source",
+) -> tuple[int, int]:
+    """把 `views_per_source` 统一解析成正分数。
+
+    支持两类输入:
+    - 正整数: `1`, `2`, `3`
+    - 正分数字符串: `1/2`, `1/3`, `2/3`
+
+    返回值始终是 `(numerator, denominator)`。
+    例如:
+    - `3` -> `(3, 1)`
+    - `"1/4"` -> `(1, 4)`
+    """
+    if isinstance(raw_value, bool):
+        raise ValueError(f"{name} 不能使用布尔值: {raw_value}")
+
+    numerator: int
+    denominator: int
+    if isinstance(raw_value, int):
+        numerator = raw_value
+        denominator = 1
+    elif isinstance(raw_value, str):
+        text = raw_value.strip()
+        if not text:
+            raise ValueError(f"{name} 不能为空字符串")
+        if "/" in text:
+            parts = [part.strip() for part in text.split("/")]
+            if len(parts) != 2 or not parts[0] or not parts[1]:
+                raise ValueError(
+                    f"{name} 分数格式只支持 `a/b`, 当前得到: {raw_value}"
+                )
+            numerator = int(parts[0])
+            denominator = int(parts[1])
+        else:
+            numerator = int(text)
+            denominator = 1
+    else:
+        raise ValueError(
+            f"{name} 只支持正整数或 `a/b` 分数字符串, 当前得到: {raw_value!r}"
+        )
+
+    if numerator < 1 or denominator < 1:
+        raise ValueError(f"{name} 必须是正整数或正分数, 当前得到: {raw_value}")
+
+    return numerator, denominator
+
+
+def format_views_per_source_fraction(numerator: int, denominator: int) -> str:
+    """把 `(numerator, denominator)` 格式化成稳定字符串。"""
+    if denominator == 1:
+        return str(numerator)
+    return f"{numerator}/{denominator}"
+
+
+def _build_plan_entry(
+    *,
+    plan_index: int,
+    source_split: str,
+    source_index: int,
+    source_repeat_index: int,
+) -> dict[str, Any]:
+    """构造一条稳定的 synthetic plan 记录。"""
+    return {
+        "plan_index": plan_index,
+        "source_split": source_split,
+        "source_index": source_index,
+        "source_repeat_index": source_repeat_index,
+        "image_id": f"gen_{plan_index}",
+    }
+
+
 def build_split_index_plan(
     split_lengths: Mapping[str, int],
     *,
@@ -74,14 +148,70 @@ def build_split_index_plan(
         for source_index in range(split_length):
             for repeat_index in range(repeat_count):
                 plan.append(
-                    {
-                        "plan_index": plan_index,
-                        "source_split": split,
-                        "source_index": source_index,
-                        "source_repeat_index": repeat_index,
-                        "image_id": f"gen_{plan_index}",
-                    }
+                    _build_plan_entry(
+                        plan_index=plan_index,
+                        source_split=split,
+                        source_index=source_index,
+                        source_repeat_index=repeat_index,
+                    )
                 )
                 plan_index += 1
+
+    return plan
+
+
+def build_fractional_split_index_plan(
+    split_lengths: Mapping[str, int],
+    *,
+    splits: Sequence[str],
+    keep_numerator: int,
+    keep_denominator: int,
+) -> list[dict[str, Any]]:
+    """按固定比例稳定抽样 source pool, 构造 synthetic plan。
+
+    语义是“每 `keep_denominator` 个 source, 保留前 `keep_numerator` 个”。
+    例如:
+    - `1/2` -> 保留索引 `0, 2, 4, ...`
+    - `2/3` -> 保留索引 `0, 1, 3, 4, 6, 7, ...`
+
+    这样能保持:
+    - 结果完全确定
+    - plan 顺序稳定
+    - resume / log / image_id 契约不变
+    """
+    numerator = int(keep_numerator)
+    denominator = int(keep_denominator)
+    if numerator < 1 or denominator < 1:
+        raise ValueError(
+            "fractional split plan 的分子分母都必须 >= 1, "
+            f"当前得到: {keep_numerator}/{keep_denominator}"
+        )
+    if numerator > denominator:
+        raise ValueError(
+            "fractional split plan 当前只支持 `0 < 分数 <= 1`, "
+            f"当前得到: {keep_numerator}/{keep_denominator}"
+        )
+
+    plan: list[dict[str, Any]] = []
+    plan_index = 0
+    for split in splits:
+        if split not in split_lengths:
+            raise KeyError(f"split_lengths 缺少 split={split} 的长度")
+        split_length = int(split_lengths[split])
+        if split_length < 0:
+            raise ValueError(f"split={split} 的长度不能为负数, 当前得到: {split_length}")
+
+        for source_index in range(split_length):
+            if source_index % denominator >= numerator:
+                continue
+            plan.append(
+                _build_plan_entry(
+                    plan_index=plan_index,
+                    source_split=split,
+                    source_index=source_index,
+                    source_repeat_index=0,
+                )
+            )
+            plan_index += 1
 
     return plan

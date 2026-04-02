@@ -1,0 +1,9 @@
+{
+  "session_id": "omx-1775103327604-vnl611",
+  "started_at": "2026-04-02T04:15:29.296Z",
+  "cwd": "/root/autodl-tmp/home/rais/FreeFix",
+  "pid": 4293,
+  "platform": "linux",
+  "pid_start_ticks": 170809255,
+  "pid_cmdline": "node /home/rais/.local/state/fnm_multishells/4024_1775103322718/bin/omx --xhigh --madmax"
+}

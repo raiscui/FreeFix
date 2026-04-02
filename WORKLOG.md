@@ -203,3 +203,41 @@
 - 真正危险的不是“某个包装不上”, 而是 path package 的宽松依赖把整条版本栈悄悄带偏
 - 在 Blackwell 迁移里, 顶层必须把 `torch` 家族一起钉死, 不能只 pin 主包
 - 当前第一轮补丁已经把版本线切到更合理的位置, 但完整 `pixi install` 终态还需要下一轮继续验证
+
+## [2026-04-01 07:13:47] [Session ID: 019d47d8-459e-7a31-bf25-470119af4082] 任务名称: 执行持续学习并整理旧支线上下文
+
+### 任务内容
+- 回读默认六文件与当前根目录的支线六文件
+- 提炼本轮最值得长期保留的项目经验
+- 清理 `LATER_PLANS.md` 中已经完成的待办
+- 把已提炼完成、且非当天活跃的旧支线移入 `archive/branch_contexts/`
+
+### 完成过程
+- 先读取默认组六文件和 `EXPERIENCE.md`, 确认主线历史主要集中在 `pixi / Blackwell / Flux rerun / Git push` 这几类问题
+- 再按后缀对根目录支线文件分组, 用“最新时间戳 + task_plan 状态 + 同组 WORKLOG/notes 是否已交付”三类证据判定活跃度
+- 把六文件摘要落进 `notes.md`, 明确记录:
+  - 当前活跃支线
+  - 可归档旧支线
+  - 这轮最值得沉淀的经验点
+- 更新 `EXPERIENCE.md`, 补充:
+  - `recon.export_3dgs_ply` 的稳定导出链路
+  - refined checkpoint 的命名与恢复步数解耦
+  - trajectory / dataset split / 上下文治理等经验
+- 清理 `LATER_PLANS.md` 中已经完成的 GitHub 推送待办
+- 生成归档 manifest:
+  - `archive/manifests/2026-04-01_continuous_learning_branch_cleanup.md`
+- 实际把以下旧支线移入 `archive/branch_contexts/`:
+  - `colmap_my4`
+  - `colmap_my5`
+  - `colmap_my6`
+  - `colmap_my7`
+  - `fastdropgs_checkpoint_refine`
+  - `fastgs_colmap_compare`
+  - `flux_kontext_change`
+  - `flux_reference_refine`
+  - `test_split_fallback`
+
+### 总结感悟
+- 持续学习最容易漏掉的不是“知识点”, 而是“哪些上下文本来早该离开根目录”
+- 把摘要、经验沉淀和归档 manifest 先写清楚, 再移动文件, 整个过程会稳很多
+- 支线活跃度判断必须交叉看 `task_plan`、`notes`、`WORKLOG` 三者, 不能只盯复选框

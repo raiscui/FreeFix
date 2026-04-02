@@ -2,7 +2,12 @@ import unittest
 from types import SimpleNamespace
 
 from ours.refine_run_schedule import build_real_train_pool, build_refine_view_plan
-from recon.refine_view_plan import build_split_index_plan, coerce_named_splits
+from recon.refine_view_plan import (
+    build_fractional_split_index_plan,
+    build_split_index_plan,
+    coerce_named_splits,
+    coerce_views_per_source_fraction,
+)
 
 
 class RefineViewPlanHelperTest(unittest.TestCase):
@@ -35,6 +40,59 @@ class RefineViewPlanHelperTest(unittest.TestCase):
             "source_repeat_index": 2,
             "image_id": "gen_8",
         })
+
+    def test_coerce_views_per_source_fraction_supports_integer_and_fraction(self) -> None:
+        self.assertEqual(coerce_views_per_source_fraction(3), (3, 1))
+        self.assertEqual(coerce_views_per_source_fraction("1/4"), (1, 4))
+
+    def test_build_fractional_split_index_plan_keeps_stable_subset(self) -> None:
+        plan = build_fractional_split_index_plan(
+            {"train": 5, "test": 4},
+            splits=("train", "test"),
+            keep_numerator=1,
+            keep_denominator=2,
+        )
+
+        self.assertEqual(
+            plan,
+            [
+                {
+                    "plan_index": 0,
+                    "source_split": "train",
+                    "source_index": 0,
+                    "source_repeat_index": 0,
+                    "image_id": "gen_0",
+                },
+                {
+                    "plan_index": 1,
+                    "source_split": "train",
+                    "source_index": 2,
+                    "source_repeat_index": 0,
+                    "image_id": "gen_1",
+                },
+                {
+                    "plan_index": 2,
+                    "source_split": "train",
+                    "source_index": 4,
+                    "source_repeat_index": 0,
+                    "image_id": "gen_2",
+                },
+                {
+                    "plan_index": 3,
+                    "source_split": "test",
+                    "source_index": 0,
+                    "source_repeat_index": 0,
+                    "image_id": "gen_3",
+                },
+                {
+                    "plan_index": 4,
+                    "source_split": "test",
+                    "source_index": 2,
+                    "source_repeat_index": 0,
+                    "image_id": "gen_4",
+                },
+            ],
+        )
 
 
 class RefineRunScheduleTest(unittest.TestCase):
@@ -95,6 +153,49 @@ class RefineRunScheduleTest(unittest.TestCase):
             "source_repeat_index": 2,
             "image_id": "gen_14",
         })
+
+    def test_build_refine_view_plan_supports_fractional_source_density(self) -> None:
+        cfg = SimpleNamespace(
+            refine_camera_source_splits=("train", "test"),
+            refine_camera_source_split="train",
+            pose_jitter_views_per_source="1/2",
+            refine_start_idx=0,
+            refine_end_idx=2,
+        )
+
+        plan, info = build_refine_view_plan(self.refiner, cfg)
+
+        self.assertEqual(info["mode"], "fractional_views_from_named_splits")
+        self.assertEqual(info["splits"], ("train", "test"))
+        self.assertEqual(info["repeats_per_source"], "1/2")
+        self.assertEqual(info["source_density"], "1/2")
+        self.assertEqual(info["count"], 3)
+        self.assertEqual(
+            plan,
+            [
+                {
+                    "plan_index": 0,
+                    "source_split": "train",
+                    "source_index": 0,
+                    "source_repeat_index": 0,
+                    "image_id": "gen_0",
+                },
+                {
+                    "plan_index": 1,
+                    "source_split": "train",
+                    "source_index": 2,
+                    "source_repeat_index": 0,
+                    "image_id": "gen_1",
+                },
+                {
+                    "plan_index": 2,
+                    "source_split": "test",
+                    "source_index": 0,
+                    "source_repeat_index": 0,
+                    "image_id": "gen_2",
+                },
+            ],
+        )
 
 
 if __name__ == "__main__":

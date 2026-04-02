@@ -2207,6 +2207,90 @@
   - 没有中途 checkpoint
   - 没有 synthetic progress 恢复机制
 
+## [2026-04-01 01:37:46] [Session ID: 019d436e-9bf6-7313-ab99-623578ee4ecf] 笔记: `offload_mode=none` 的 resume 重跑已验证生效
+
+## 来源
+
+### 来源1: 旧实例停机前的动态现场
+
+- 命令:
+  - `pgrep -af 'ours\\.refine_by_flux|flux_shinkai_museum_v2_pose_jitter_train_test_x3_20260330|tee .../run.log'`
+  - `rg -n '已保存恢复 checkpoint' run.log`
+  - `tail -n 3 refine/pose_jitter_log.jsonl`
+- 要点:
+  - 旧实例仍活着:
+    - `89870` bash pipeline
+    - `89872` python
+    - `89873` tee
+  - 停机前实时推进已经到:
+    - `plan_index=92`
+    - `render/depth=092`
+    - `gen=091`
+  - 但最近一次可恢复 checkpoint 仍是:
+    - `plan=75/972`
+    - `refine_resume_state.json` 仍显示 `next_plan_index=75`
+
+### 来源2: 新实例启动日志
+
+- 文件: [run.log](/root/autodl-tmp/home/rais/FreeFix/outputs/my5_colmap_fastgs_stable_35k_dense/flux_shinkai_museum_v2_pose_jitter_train_test_x3_20260330/run.log)
+- 要点:
+  - 新日志出现:
+    - `开始执行 pipe.to(cuda)`
+    - `pipe.to(cuda) 返回`
+    - `恢复 synthetic train pool: restored=75 next_plan_index=75/972`
+  - 没有出现:
+    - `enable_model_cpu_offload`
+    - `model_cpu`
+
+### 来源3: 重启后的产物目录
+
+- 目录: [outputs/my5_colmap_fastgs_stable_35k_dense/flux_shinkai_museum_v2_pose_jitter_train_test_x3_20260330](/root/autodl-tmp/home/rais/FreeFix/outputs/my5_colmap_fastgs_stable_35k_dense/flux_shinkai_museum_v2_pose_jitter_train_test_x3_20260330)
+- 要点:
+  - 新实例启动后, 目录先回退到:
+    - `render_max=075`
+    - `depth_max=075`
+    - `gen_max=074`
+  - 这说明 `75` 之后的旧半截产物没有被沿用
+  - 再次采样时已经继续推进到:
+    - `render_max=077`
+    - `depth_max=077`
+    - `gen_max=076`
+    - `pose_jitter_log.jsonl` 最后 `plan_index=77`
+    - `generated_cams.jsonl` 最后 `plan_index=76`
+
+### 来源4: 新实例进程状态
+
+- 命令:
+  - `ps -o pid,pgid,ppid,stat,etime,%cpu,%mem,cmd -p 117765,117767,117768`
+- 要点:
+  - 新实例当前 PID:
+    - `117765` bash pipeline
+    - `117767` python
+    - `117768` tee
+  - 当前 python 进程仍在高占用运行
+
+## 综合发现
+
+### 现象
+
+- 用户要求把 `refine_pipeline_offload_mode` 改成 `none` 后 resume 重跑
+- 现场实际需要先停掉旧实例, 否则会污染同一输出目录
+
+### 已验证结论
+
+- 这轮 resume 重跑已经成功切到 `none` 路径
+- 证据不是“配置文件改了”, 而是:
+  - 新日志出现 `pipe.to(cuda)` 正常返回
+  - 新日志里没有 `model_cpu` / `enable_model_cpu_offload`
+  - 新实例严格从 `next_plan_index=75` 一档恢复
+  - `75` 之后的旧半截产物被清掉, 然后重新向前推进
+
+### 当前仍需注意
+
+- `refine_resume_state.json` 暂时还停在上一次 checkpoint 保存时刻
+- 这不是恢复失败
+- 只是说明 rolling checkpoint 仍按周期落盘, 所以如果再次中断, 两次 checkpoint 之间那一小段仍可能重做
+
 ### 当前最准确的口径
 
 - 对当前这次 run 来说:
@@ -2214,3 +2298,369 @@
   - 只能:
     - 从初始 checkpoint 重新跑
     - 或者先改代码, 做出真正的断点恢复能力后, 再用于后续运行
+
+## [2026-04-01 16:38:13] [Session ID: 37900] 笔记: 重新 bridge 后的新一轮 refine 当前吞吐正常
+
+## 来源
+
+### 来源1: 产物目录二次采样
+
+- 目录: [outputs/my5_colmap_fastgs_stable_35k_dense/flux_shinkai_museum_v2_pose_jitter_train_test_x3_20260330](/root/autodl-tmp/home/rais/FreeFix/outputs/my5_colmap_fastgs_stable_35k_dense/flux_shinkai_museum_v2_pose_jitter_train_test_x3_20260330)
+- 要点:
+  - 第一次采样:
+    - `refine/render=95`
+    - `refine/gen=94`
+    - `refine/depth=95`
+  - 约 75 秒后二次采样:
+    - `refine/render=105`
+    - `refine/gen=104`
+    - `refine/depth=105`
+  - `after_refine` 仍为 `0`, 说明当前还在 synthetic plan 主循环里
+
+### 来源2: `refine_resume_state.json`
+
+- 文件: [refine_resume_state.json](/root/autodl-tmp/home/rais/FreeFix/outputs/my5_colmap_fastgs_stable_35k_dense/flux_shinkai_museum_v2_pose_jitter_train_test_x3_20260330/refine_resume_state.json)
+- 要点:
+  - 第一次读到:
+    - `next_plan_index=75`
+    - `latest_completed_plan_index=74`
+  - 第二次读到:
+    - `next_plan_index=100`
+    - `latest_completed_plan_index=99`
+    - `updated_at_utc=2026-04-01T08:37:01.665523+00:00`
+  - `plan_total=566`
+
+### 来源3: 后台 PTY 运行输出
+
+- 会话: `79572`
+- 要点:
+  - 输出持续出现单条 plan 内部的进度条
+  - 已看到 `32/32` 阶段结束后立刻进入新的 `400` 步优化阶段
+  - 说明主进程没有卡死, 而是在稳定执行每条 synthetic plan
+
+## 综合发现
+
+### 现象
+
+- 重跑后的 `refine` 仍在进行中
+- watcher 还未进入 `evaluation`, 因为主 `refine` 进程尚未退出
+
+### 已验证结论
+
+- 这轮 run 是健康推进的, 不是假跑也不是卡在旧保存点
+- 当前 `resume_state.json` 只能代表最近一次 rolling save 点, 不能当作毫秒级实时进度
+- 以最近一次 75 秒窗口估算, 吞吐大约是 `10 plans / 75s`
+- 按这个区间粗估, 从 `plan 105/566` 到收尾大约还需 `55-65` 分钟, 但实际还会受周期性保存与导出阶段影响
+
+### 当前口径
+
+- 可以确认:
+  - raw FastGS checkpoint 已重新 bridge
+  - 新配置口径下的 refine 已按 `train-only synthetic + test fixed window(0..40)` 正式重跑
+- 还不能提前宣称:
+  - refined ckpt 已经产出
+  - evaluation 已完成
+
+## [2026-04-01 18:17:27] [Session ID: 37900] 笔记: 本轮 `ckpt_35000_freefix.pt` 重跑与评估结果
+
+## 来源
+
+### 来源1: `refine_resume_state.json`
+
+- 文件: [refine_resume_state.json](/root/autodl-tmp/home/rais/FreeFix/outputs/my5_colmap_fastgs_stable_35k_dense/flux_shinkai_museum_v2_pose_jitter_train_test_x3_20260330/refine_resume_state.json)
+- 要点:
+  - `status=complete`
+  - `synthetic_complete=true`
+  - `after_refine_complete=true`
+  - `next_plan_index=566`
+  - `latest_completed_plan_index=565`
+  - `final_ckpt_path=outputs/my5_colmap_fastgs_stable_35k_dense/ckpts/ckpt_flux_shinkai_museum_v2_pose_jitter_train_test_x3_20260330.pt`
+
+### 来源2: refine 与导出产物
+
+- 文件:
+  - [ckpt_35000_freefix.pt](/root/autodl-tmp/home/rais/FreeFix/data/fastgs_bridge/my5_nomask_v1/ckpt_35000_freefix.pt)
+  - [ckpt_flux_shinkai_museum_v2_pose_jitter_train_test_x3_20260330.pt](/root/autodl-tmp/home/rais/FreeFix/outputs/my5_colmap_fastgs_stable_35k_dense/ckpts/ckpt_flux_shinkai_museum_v2_pose_jitter_train_test_x3_20260330.pt)
+  - [after_refine.mp4](/root/autodl-tmp/home/rais/FreeFix/outputs/my5_colmap_fastgs_stable_35k_dense/flux_shinkai_museum_v2_pose_jitter_train_test_x3_20260330/after_refine.mp4)
+  - [point_cloud_flux_shinkai_museum_v2_pose_jitter_train_test_x3_20260330.ply](/root/autodl-tmp/home/rais/FreeFix/outputs/my5_colmap_fastgs_stable_35k_dense/point_cloud_flux_shinkai_museum_v2_pose_jitter_train_test_x3_20260330.ply)
+- 要点:
+  - bridge ckpt 已重新由 `/home/rais/FastGS/output/my5_nomask_v1/checkpoints/ckpt_35000.pth` 转成 FreeFix 入口 ckpt
+  - 本轮最终 refined ckpt 已保存
+  - `before_refine=41`
+  - `after_refine=41`
+  - `refine/render=566`
+  - `refine/gen=566`
+  - `refine/depth=566`
+  - refined `point_cloud` 不是自动产物, 本轮已用现有导出脚本补齐
+
+### 来源3: evaluation json
+
+- 文件:
+  - [35000_test.json](/root/autodl-tmp/home/rais/FreeFix/outputs/my5_colmap_fastgs_stable_35k_dense/flux_shinkai_museum_v2_pose_jitter_train_test_x3_20260330/eval/35000_test.json)
+  - [35000_train.json](/root/autodl-tmp/home/rais/FreeFix/outputs/my5_colmap_fastgs_stable_35k_dense/flux_shinkai_museum_v2_pose_jitter_train_test_x3_20260330/eval/35000_train.json)
+  - [flux_shinkai_museum_v2_pose_jitter_train_test_x3_20260330_test.json](/root/autodl-tmp/home/rais/FreeFix/outputs/my5_colmap_fastgs_stable_35k_dense/flux_shinkai_museum_v2_pose_jitter_train_test_x3_20260330/eval/flux_shinkai_museum_v2_pose_jitter_train_test_x3_20260330_test.json)
+  - [flux_shinkai_museum_v2_pose_jitter_train_test_x3_20260330_train.json](/root/autodl-tmp/home/rais/FreeFix/outputs/my5_colmap_fastgs_stable_35k_dense/flux_shinkai_museum_v2_pose_jitter_train_test_x3_20260330/eval/flux_shinkai_museum_v2_pose_jitter_train_test_x3_20260330_train.json)
+- 要点:
+  - base bridge ckpt test:
+    - `PSNR=27.188240097790228`
+    - `SSIM=0.8906744631325326`
+    - `LPIPS=0.2037334242245046`
+  - refined ckpt test:
+    - `PSNR=27.559024531666825`
+    - `SSIM=0.8938605901671619`
+    - `LPIPS=0.19603789743126893`
+  - test 差值(refined - base):
+    - `PSNR=+0.3707844338765973`
+    - `SSIM=+0.0031861270346292825`
+    - `LPIPS=-0.00769552679323568`
+  - base bridge ckpt train:
+    - `PSNR=27.30250376104887`
+    - `SSIM=0.892769445168256`
+    - `LPIPS=0.20248514247972638`
+  - refined ckpt train:
+    - `PSNR=27.745485770828733`
+    - `SSIM=0.8964001765941984`
+    - `LPIPS=0.19431411403859883`
+  - train 差值(refined - base):
+    - `PSNR=+0.44298200977986113`
+    - `SSIM=+0.0036307314259423906`
+    - `LPIPS=-0.008171028441127548`
+
+## 综合发现
+
+### 现象
+
+- 用户要求基于修改后的 `test_split=test` / `refine_end_idx=41` / `train-only synthetic` 口径, 对 `ckpt_35000.pth` 重新 bridge 后再跑一整套 refine 和评估
+
+### 已验证结论
+
+- 这轮已经完整达成该目标
+- 当前这套结果的 fixed-view 窗口确实是 `test` split 的 `0..40`
+- synthetic 训练池与 camera source 都只来自 `train`
+- 自动评估结果显示 refined ckpt 相比 base bridge ckpt 在 `test` 与 `train` 两个 split 上都一致提升:
+  - `PSNR` 更高
+  - `SSIM` 更高
+  - `LPIPS` 更低
+
+### 当前口径
+
+- 可以把这轮结果视为:
+  - 重新 bridge `output/my5_nomask_v1/checkpoints/ckpt_35000.pth`
+  - 按修改后的 `exp_cfg/my5/flux_shinkai_museum_v2_35k_pose_jitter_train_test_x3_20260330.yaml` 完整重跑
+  - 再对 base / refined 两个 checkpoint 做同口径 evaluation
+
+## [2026-04-01 18:28:08] [Session ID: 37900] 笔记: 重影候选原因排查 - 位姿错配假设不成立, 更像 synthetic 外观与结构约束冲突
+
+## 来源
+
+### 来源1: `recon/refiner.py` 的相机采样与返回值
+
+- 文件: [refiner.py](/root/autodl-tmp/home/rais/FreeFix/recon/refiner.py)
+- 要点:
+  - `render(camera_mode='pose_jitter')` 先读取 `base_c2w`
+  - 然后用 `sample_bounded_pose_jitter(...)` 采样扰动
+  - 再构造 `jittered_c2w = base_c2w @ build_local_camera_transform(...)`
+  - 最终写进 `cam_param['c2w']` 的就是这个 `jittered_c2w`, 不是原始 `base_c2w`
+
+### 来源2: `ours/refine_backend_runner.py` 的 synthetic supervise 调用链
+
+- 文件: [refine_backend_runner.py](/root/autodl-tmp/home/rais/FreeFix/ours/refine_backend_runner.py)
+- 要点:
+  - `refiner.render(...)` 返回的 `cam_param['c2w']` 会直接写进:
+    - `refine_cams[0]['camtoworld'] = c2w`
+  - 同时 `append_generated_camera_record(...)` 会把同一份 `cam_param['c2w']` 记录进 `generated_cams.jsonl`
+  - 恢复时 `restore_completed_generated_cams(...)` 也是直接从日志里把这份 `c2w` 读回来, 没有改回原相机
+
+### 来源3: 本轮产物日志的动态证据
+
+- 文件:
+  - [generated_cams.jsonl](/root/autodl-tmp/home/rais/FreeFix/outputs/my5_colmap_fastgs_stable_35k_dense/flux_shinkai_museum_v2_pose_jitter_train_test_x3_20260330/refine/generated_cams.jsonl)
+  - [pose_jitter_log.jsonl](/root/autodl-tmp/home/rais/FreeFix/outputs/my5_colmap_fastgs_stable_35k_dense/flux_shinkai_museum_v2_pose_jitter_train_test_x3_20260330/refine/pose_jitter_log.jsonl)
+- 要点:
+  - `generated_cams.jsonl` 首条记录明确是:
+    - `camera_mode=pose_jitter`
+    - `source_split=train`
+    - `source_index=0`
+    - 带一份显式保存的 `c2w`
+  - `pose_jitter_log.jsonl` 同一条记录明确保存了本次采样的:
+    - `pose_jitter_trans`
+    - `pose_jitter_rots`
+  - 进一步对比 `train[0]` 的原始 `c2w` 与首条 `generated_cams.jsonl['c2w']`, 平移项差值为:
+    - `delta_t=[0.00857, -0.02374, 0.00463]`
+  - 说明这份训练相机确实已经偏离原相机, 不是“原位姿监督”
+
+### 来源4: `mask / warp` 的实际生效方式
+
+- 文件:
+  - [refine_by_flux.py](/root/autodl-tmp/home/rais/FreeFix/ours/refine_by_flux.py)
+  - [flow_match_euler_discrete_scheduler.py](/root/autodl-tmp/home/rais/FreeFix/ours/schedulers/flow_match_euler_discrete_scheduler.py)
+  - [flux_pipeline.py](/root/autodl-tmp/home/rais/FreeFix/ours/pipelines/flux_pipeline.py)
+- 要点:
+  - `mask` 来自 `multi_certainties`, 本质是基于 Hessian 不确定性算出的多级 certainty mask
+  - `warp_mask` 用的是当前渲染视角的 `alpha`
+  - 在 scheduler 里:
+    - `warp_latent = warp_latent * warp_mask + x0 * (1 - warp_mask)`
+    - 若 `guided and warp`, 则 `x0 = prior_latents*mask + (1-mask)*(warp_latent * 0.8 + x0 * 0.2)`
+  - 这说明已有结构会被明显保留, 尤其在 `alpha` 覆盖区域和 certainty mask 覆盖区域
+
+## 综合发现
+
+### 现象
+
+- 用户主观感觉这轮 refined 结果更重影
+
+### 已验证结论
+
+- “jitter render 的图被拿去训练非 jitter 原相机位姿” 这条假设, 当前证据不支持
+- 更像的解释是:
+  - synthetic 图是在 jitter 后新视角上生成的
+  - 但 Flux 生成结果未必与这个新视角的真实几何完全一致
+  - 后续 `mask + warp(alpha)` 又会把已有结构强力混回去
+  - 于是容易把“轻微错位的旧结构”和“新生成纹理”一起写进高斯, 视觉上就会像重影
+
+### 当前仍需注意
+
+- 我顺手发现一个配置一致性信号:
+  - 当前磁盘上的 yaml 里 `pose_jitter_views_per_source` 显示为 `1`
+  - 但本轮产物 `generated_cams.jsonl` 实际有 `566` 条, 并且 `source_repeat_index` 出现了 `0/1`
+  - 这说明“当前文件内容”和“本轮实际运行时配置”之间至少有一处时间差
+- 所以下面的判断, 我是以代码调用链和本轮产物日志为准, 不是只以当前 yaml 的静态文本为准
+
+## [2026-04-01 21:12:00] [Session ID: 2a213fb2-1d29-4f62-9c76-68a7700db14c] 笔记: 邻近镜头平均半径模式已完成接线, 当前语义是“高斯方向 + 邻居半径 cap”
+
+## 来源
+
+### 来源1: `ours/refine_backend_runner.py`
+
+- 文件: [refine_backend_runner.py](/root/autodl-tmp/home/rais/FreeFix/ours/refine_backend_runner.py)
+- 要点:
+  - 新增了 `build_refiner_runtime_kwargs(...)`
+  - 这一层统一把 wrapper 配置整理成 `Refiner(...)` 参数
+  - 新增字段全部用 `getattr(..., default)` 兜底:
+    - `pose_jitter_trans_radius_mode`
+    - `pose_jitter_neighbor_window`
+    - `pose_jitter_neighbor_radius_scale`
+  - 这样旧 yaml 就算还没声明这些字段, 也不会在初始化阶段直接报属性不存在
+
+### 来源2: `recon/refiner.py`
+
+- 文件: [refiner.py](/root/autodl-tmp/home/rais/FreeFix/recon/refiner.py)
+- 要点:
+  - `render(camera_mode='pose_jitter')` 现在会先算:
+    - `trans_radius_limit = _resolve_pose_jitter_trans_radius_limit(...)`
+  - 再把这个值传给:
+    - `sample_bounded_pose_jitter(..., trans_radius_max=trans_radius_limit)`
+  - 半径来源是:
+    - 当前 split 序列里
+    - 当前镜头到相邻镜头的中心距离
+    - 再取平均
+    - 最后乘 `pose_jitter_neighbor_radius_scale`
+  - 我额外补了 `pose_jitter_pose_sequence_cache`
+    - 避免每个 synthetic plan 都把整条相机序列重新读一遍
+    - 当前 cache key 是 `(split_kind, trans)`
+
+### 来源3: `recon/pose_jitter.py`
+
+- 文件: [pose_jitter.py](/root/autodl-tmp/home/rais/FreeFix/recon/pose_jitter.py)
+- 要点:
+  - 当前实现不是“按邻居半径重新定义采样分布”
+  - 而是:
+    - 先按原来的逐轴高斯 + 逐轴 `trans_max` 采样
+    - 如果总平移向量范数超过 `trans_radius_max`
+    - 再把整个向量按比例缩回半径球内
+  - 这意味着:
+    - 方向仍然来自旧高斯
+    - 但总位移不会超过邻近镜头平均距离给出的上限
+
+### 来源4: 当前实验配置与验证命令
+
+- 文件:
+  - [base.yaml](/root/autodl-tmp/home/rais/FreeFix/exp_cfg/base.yaml)
+  - [flux_shinkai_museum_v2_35k_pose_jitter_train_test_x3_20260330.yaml](/root/autodl-tmp/home/rais/FreeFix/exp_cfg/my5/flux_shinkai_museum_v2_35k_pose_jitter_train_test_x3_20260330.yaml)
+- 命令:
+  - `OMP_NUM_THREADS=1 direnv exec . .pixi/envs/default/bin/python -m pytest tests/test_pose_jitter_refine.py`
+  - `OMP_NUM_THREADS=1 direnv exec . .pixi/envs/default/bin/python -m unittest tests.test_pose_jitter_refine`
+  - `OMP_NUM_THREADS=1 direnv exec . .pixi/envs/default/bin/python -m unittest tests.test_refine_view_plan tests.test_refine_cli_paths tests.test_run_fastgs_refine`
+- 要点:
+  - `pytest` 在当前 pixi 环境里不存在, 报:
+    - `No module named pytest`
+  - 随后改用 `unittest` 跑同一组与相关回归测试, 全部通过:
+    - `tests.test_pose_jitter_refine`: `13 tests`
+    - 相关回归合计: `22 tests`
+
+## 综合发现
+
+### 已验证结论
+
+- “前后两个镜头平均半径作为 jitter 半径范围” 这条链路已经完整打通:
+  - 配置层
+  - backend wrapper
+  - `Refiner`
+  - pose jitter helper
+  - 实验 yaml
+  - 单测
+- 当前默认语义明确是:
+  - `pose_jitter_neighbor_window: 1`
+  - 也就是“前一个 + 后一个”
+- 当前实现更保守:
+  - 它只把邻居平均半径当作总位移 cap
+  - 不会彻底抛弃原本的 `sigma/max` 方向分布
+
+### 当前仍需注意
+
+- 如果后面用户想要的不是“半径上限”, 而是“半径本身也按邻居距离分布去采样”
+  - 那还需要再做第二轮语义细化
+  - 当前这轮还没有走到那一步
+
+## [2026-04-01 21:28:00] [Session ID: 6f225887-9be2-454c-a76d-72780a9280bd] 笔记: 已把 `my5` 当前实验调成“邻居半径主导型”
+
+## 来源
+
+### 来源1: 当前 `my5 train` 相邻镜头距离统计
+
+- 数据来源:
+  - `outputs/my5_colmap_fastgs_stable_35k_dense/cfg.json`
+  - `/home/rais/FastGS/data/my5_colmap_fastgs`
+  - `recon.datasets.colmap.Parser / Dataset(split='train')`
+- 命令:
+  - `OMP_NUM_THREADS=1 direnv exec . .pixi/envs/default/bin/python - <<'PY' ...`
+- 要点:
+  - `train_count = 283`
+  - `avg_neighbor` 分布:
+    - `p25 = 0.100512`
+    - `p50 = 0.133148`
+    - `p75 = 0.202616`
+    - `p90 = 0.473087`
+    - `mean = 0.235181`
+  - 这说明:
+    - 旧的 `trans_sigma = 0.03`
+    - 对大多数镜头来说都偏小
+    - 采样范数通常还没碰到邻居半径 cap, 就已经结束了
+
+### 来源2: 当前参数如何才能让“邻居半径”真正主导
+
+- 要点:
+  - 如果想让 `neighbor_average_radius` 真正主导
+  - 核心不是继续把 `trans_max` 压小
+  - 而是:
+    - 把 `trans_sigma` 提到和邻居距离同量级
+    - 同时让 `trans_max` 保持比大多数邻居 cap 更宽
+  - 这样采样更常碰到“总半径 cap”
+  - 而不是先被固定 `sigma/max` 自己卡住
+
+## 综合发现
+
+### 已落地调整
+
+- 已修改 [flux_shinkai_museum_v2_35k_pose_jitter_train_test_x3_20260330.yaml](/root/autodl-tmp/home/rais/FreeFix/exp_cfg/my5/flux_shinkai_museum_v2_35k_pose_jitter_train_test_x3_20260330.yaml):
+  - `pose_jitter_trans_sigma: [0.10, 0.10, 0.10]`
+  - `pose_jitter_trans_max: [0.50, 0.50, 0.50]`
+  - `pose_jitter_neighbor_radius_scale: 0.85`
+
+### 当前口径
+
+- 这组值的目标不是“更猛”
+- 而是“让邻居半径更常成为真正限制项”
+- 同时把 `scale` 从 `1.0` 稍微降到 `0.85`
+  - 避免一上来就总是顶满相邻镜头平均距离
+  - 给重影风险留一点缓冲

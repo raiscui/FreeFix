@@ -1,6 +1,12 @@
 from typing import Any
 
-from recon.refine_view_plan import build_split_index_plan, coerce_named_splits
+from recon.refine_view_plan import (
+    build_fractional_split_index_plan,
+    build_split_index_plan,
+    coerce_named_splits,
+    coerce_views_per_source_fraction,
+    format_views_per_source_fraction,
+)
 
 
 def build_real_train_pool(refiner, cfg) -> tuple[list[dict[str, Any]], list[float], dict[str, Any]]:
@@ -62,16 +68,34 @@ def build_refine_view_plan(refiner, cfg) -> tuple[list[dict[str, Any]], dict[str
         raw_source_splits,
         default=(getattr(cfg, "refine_camera_source_split", "train"),),
     )
-    repeats_per_source = int(getattr(cfg, "pose_jitter_views_per_source", 1))
     split_lengths = {split: refiner.get_dataset_length(split) for split in source_splits}
-    plan = build_split_index_plan(
-        split_lengths,
-        splits=source_splits,
-        repeats_per_item=repeats_per_source,
+    density_numerator, density_denominator = coerce_views_per_source_fraction(
+        getattr(cfg, "pose_jitter_views_per_source", 1)
     )
+    density_label = format_views_per_source_fraction(density_numerator, density_denominator)
+
+    if density_denominator == 1:
+        repeats_per_source: int | str = density_numerator
+        plan = build_split_index_plan(
+            split_lengths,
+            splits=source_splits,
+            repeats_per_item=density_numerator,
+        )
+        mode = "all_views_from_named_splits"
+    else:
+        repeats_per_source = density_label
+        plan = build_fractional_split_index_plan(
+            split_lengths,
+            splits=source_splits,
+            keep_numerator=density_numerator,
+            keep_denominator=density_denominator,
+        )
+        mode = "fractional_views_from_named_splits"
+
     return plan, {
-        "mode": "all_views_from_named_splits",
+        "mode": mode,
         "splits": source_splits,
         "repeats_per_source": repeats_per_source,
+        "source_density": density_label,
         "count": len(plan),
     }

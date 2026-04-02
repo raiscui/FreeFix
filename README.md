@@ -131,12 +131,17 @@ python -m ours.refine_by_flux --exp_cfg <exp_cfg_path>
 
 # Example
 python -m ours.refine_by_flux --exp_cfg exp_cfg/mipnerf/flux_bicycle_v2.yaml
+
+# Kontext example
+python -m ours.refine_by_kontext --exp_cfg exp_cfg/mipnerf/flux_bicycle_v2.yaml
 ```
 
 **Note:**
 - Ensure that the `base_dir` in your experiment configuration file matches the `<result_directory>` from the reconstruction step.
 - You can find and customize configuration files in the `exp_cfg/` directory.
-- Other refinement methods are also available (e.g., `ours/refine_by_sdxl.py`).
+- Other refinement methods are also available (e.g., `ours/refine_by_sdxl.py`, `ours/refine_by_kontext.py`).
+- `kontext` is an optional backend for image-edit / reference-guided repair scenarios. It does not replace the default `flux` path.
+- `kontext` uses its own `kontext_model_path` config key. Do not point it at the `FLUX.1-dev` snapshot used by `flux_model_path`.
 
 ### External checkpoint bridge -> refine
 
@@ -147,6 +152,16 @@ python ours/run_fastgs_refine.py \
   --ckpt-path /path/to/ckpt_30000.pth \
   --colmap-path /path/to/colmap_scene \
   --exp-cfg exp_cfg/<scene>/flux_<scene>.yaml
+```
+
+To try the optional Kontext backend with the same wrapper:
+
+```bash
+python ours/run_fastgs_refine.py \
+  --ckpt-path /path/to/ckpt_30000.pth \
+  --colmap-path /path/to/colmap_scene \
+  --exp-cfg exp_cfg/<scene>/flux_<scene>.yaml \
+  --refine-backend kontext
 ```
 
 The same entrypoint also accepts fast-dropgs checkpoints such as:
@@ -164,6 +179,13 @@ Notes:
 - `--exp-cfg` must point to a FreeFix refine config whose `base_dir` and runtime contract match the target scene.
 - If the upstream checkpoint name is very generic, such as `chkpnt50000.pth`, prefer setting `--bridge-output` explicitly when you want a stable custom output path.
 - Use `--dry-run` first if you want to inspect the bridge / refine / export commands before launching a real run.
+- If you choose `--refine-backend kontext`, prepare a `FLUX.1-Kontext-dev` snapshot via `kontext_model_path` or the local cache path. Do not reuse `flux_model_path`.
+- `kontext` keeps the current render as the primary edit image.
+- In `pose_jitter` mode, FreeFix uses the original source camera image from the training dataset as the single `image_reference` when a conservative union edit mask can be derived. This keeps the jitter render as the composition anchor while borrowing faithful appearance cues from the original capture.
+- `kontext` now auto-builds a shorter, more conservative prompt aimed at minimal cleanup rather than aggressive detail synthesis. When a reference image is present, it is framed as broad color / material guidance only.
+- If the scene gets too “busy” or over-sharpened, prefer setting `kontext_prompt` and `kontext_negative_prompt` instead of reusing the main `flux` prompt pair unchanged.
+- If no compatible mask can be derived, FreeFix falls back to plain `FluxKontextPipeline`.
+- `kontext` does not currently promise one-to-one parity with the private `mask_scheduler` / `warp_*` behavior used by the custom `flux` / `sdxl` pipelines.
 
 **Pose jitter quick start:**
 - In `exp_cfg/base.yaml` or your experiment yaml, set `refine_camera_mode: pose_jitter`.

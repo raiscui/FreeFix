@@ -49,6 +49,7 @@ def sample_bounded_pose_jitter(
     trans_max: Sequence[float],
     rot_sigma_deg: Sequence[float],
     rot_max_deg: Sequence[float],
+    trans_radius_max: Optional[float] = None,
 ) -> Tuple[Tuple[float, float, float], Tuple[float, float, float]]:
     """按高斯分布采样 pose jitter, 再用硬上限裁剪长尾样本。"""
     trans_sigma_arr = np.abs(np.asarray(tuple(trans_sigma), dtype=np.float64))
@@ -62,10 +63,60 @@ def sample_bounded_pose_jitter(
     clipped_trans = np.clip(sampled_trans, -trans_max_arr, trans_max_arr)
     clipped_rot = np.clip(sampled_rot, -rot_max_arr, rot_max_arr)
 
+    # ------------------------------------------------------------------
+    # 某些场景下, 用户更希望 jitter 的“总位移半径”跟随相邻镜头间距。
+    # 这里在保留逐轴高斯采样习惯的同时, 再附加一个球形半径上限。
+    # 这样 direction 仍来自当前分布, 但不会跑出邻近镜头实际覆盖太远。
+    # ------------------------------------------------------------------
+    if trans_radius_max is not None:
+        normalized_radius_max = float(max(0.0, trans_radius_max))
+        trans_radius = float(np.linalg.norm(clipped_trans))
+        if normalized_radius_max > 0.0 and trans_radius > normalized_radius_max:
+            clipped_trans = clipped_trans * (normalized_radius_max / trans_radius)
+
     return (
         tuple(float(v) for v in clipped_trans),
         tuple(float(v) for v in clipped_rot),
     )
+
+
+def compute_neighbor_average_radius(
+    camtoworlds: Sequence[Tensor],
+    *,
+    source_index: int,
+    neighbor_window: int,
+) -> Optional[float]:
+    """计算当前镜头与相邻镜头之间的平均平移半径。
+
+    这里的“前后两个镜头”默认解释成:
+    - `neighbor_window=1` 时, 取前一个和后一个
+    - `neighbor_window=2` 时, 取前后各两个
+    """
+    normalized_window = max(0, int(neighbor_window))
+    normalized_source_index = int(source_index)
+    if normalized_window < 1:
+        return None
+    if normalized_source_index < 0 or normalized_source_index >= len(camtoworlds):
+        return None
+
+    base_c2w = camtoworlds[normalized_source_index]
+    base_center = base_c2w[:3, 3]
+    radii: List[float] = []
+
+    for offset in range(1, normalized_window + 1):
+        prev_index = normalized_source_index - offset
+        next_index = normalized_source_index + offset
+
+        if prev_index >= 0:
+            prev_center = camtoworlds[prev_index][:3, 3]
+            radii.append(float(torch.linalg.norm(prev_center - base_center).item()))
+        if next_index < len(camtoworlds):
+            next_center = camtoworlds[next_index][:3, 3]
+            radii.append(float(torch.linalg.norm(next_center - base_center).item()))
+
+    if not radii:
+        return None
+    return float(np.mean(radii))
 
 
 def compute_alpha_coverage(alpha: Tensor, alpha_threshold: float) -> float:
@@ -136,4 +187,3 @@ def select_pose_jitter_candidate(
         "fallback_target": "base_camera",
         "attempts": attempt_logs,
     }
-

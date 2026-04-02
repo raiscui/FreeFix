@@ -798,3 +798,147 @@
   - 临时 `askpass`
   - `git push raiscui main:main`
 - 远端 `raiscui/FreeFix` 的 `main` 已经更新到本地 `HEAD`
+
+## [2026-04-01 07:08:34] [Session ID: 019d47d8-459e-7a31-bf25-470119af4082] 笔记: 持续学习六文件摘要与归档判定
+
+## 六文件摘要(用于决定如何沉淀知识)
+
+- 涉及的上下文集:
+  - 默认组: `task_plan.md`、`notes.md`、`WORKLOG.md`、`LATER_PLANS.md`、`ERRORFIX.md`、`EPIPHANY_LOG.md`
+  - 支线组:
+    - `__fastgs_refine_probe`
+    - `__flux_shinkai_ply_export`
+    - `__nspr_eval`
+    - `__flux_kontext_change`
+    - `__flux_reference_refine`
+    - `__fastdropgs_checkpoint_refine`
+    - `__colmap_my4`
+    - `__colmap_my5`
+    - `__colmap_my6`
+    - `__colmap_my7`
+    - `__fastgs_colmap_compare`
+    - `__test_split_fallback`
+
+- 任务目标(`task_plan.md`):
+  - 对当前仓库的默认六文件和支线六文件做一次持续学习回读。
+  - 区分活跃支线、未轮转旧支线和可归档对象。
+  - 把可复用经验沉淀到更合适的长期载体。
+
+- 默认组关键决定(`task_plan.md` / `WORKLOG.md` / `EPIPHANY_LOG.md`):
+  - 主线历史主要集中在 `pixi/mmcv/pytorch3d/Blackwell` 迁移与 GitHub 推送排障。
+  - `EXPERIENCE.md` 目前已经沉淀了:
+    - refine resume 真相源
+    - fixed-view batch render 的正确理解
+    - Flux ModelScope 路线
+    - Torch 家族 pin 的经验
+  - 默认 `LATER_PLANS.md` 里仍有 Blackwell 迁移相关待办, 但 GitHub 推送待办已经完成, 应清理。
+
+- 支线组摘要与活跃度判定:
+  - `__nspr_eval`:
+    - 最新记录为今天, 且 `task_plan__nspr_eval.md` 仍有未完成阶段。
+    - 判定: 活跃支线。
+    - 当前阻塞: 仓库全文搜索还没找到 `NSPR` 的真实定义, 不能把它直接当 `PSNR`。
+  - `__fastgs_refine_probe`:
+    - 最新记录为今天。
+    - `task_plan__fastgs_refine_probe.md` 最近一轮任务已完成, 但同组 `LATER_PLANS` 仍挂着 GPU benchmark。
+    - 判定: 活跃支线, 不归档。
+  - `__flux_shinkai_ply_export`:
+    - 最新记录为今天, 导出已完成。
+    - 判定: 活跃支线, 暂不归档, 因为仍属于当天刚完成的交付。
+  - `__flux_kontext_change`:
+    - 3 月 31 日完成 OpenSpec artifact, `task_plan` 全部勾选。
+    - 判定: 未轮转旧支线, 可在提炼后归档。
+  - `__flux_reference_refine`:
+    - 3 月 30 日完成能力边界判断与 OpenSpec 方向选择。
+    - 判定: 未轮转旧支线, 可在提炼后归档。
+  - `__fastdropgs_checkpoint_refine`:
+    - 3 月 29 日完成 `my8` refine、评估和评估链修复。
+    - 判定: 未轮转旧支线, 可在提炼后归档。
+  - `__colmap_my4`:
+    - 3 月 27 日完成新 prompt rerun 与收尾核对。
+    - 判定: 未轮转旧支线, 可在提炼后归档。
+  - `__colmap_my5`:
+    - 3 月 28 日完成 Unity 友好版轨迹 sidecar。
+    - 判定: 未轮转旧支线, 可在提炼后归档。
+  - `__colmap_my6`:
+    - 3 月 28 日完成 bridge/refine/eval。
+    - 判定: 未轮转旧支线, 可在提炼后归档。
+  - `__colmap_my7`:
+    - 3 月 28 日完成 bridge/refine/eval。
+    - 判定: 未轮转旧支线, 可在提炼后归档。
+  - `__test_split_fallback`:
+    - 3 月 27 日完成 fallback split 修复和回归测试。
+    - 判定: 未轮转旧支线, 可在提炼后归档。
+  - `__fastgs_colmap_compare`:
+    - 最新记录停在 3 月 27 日。
+    - `task_plan` 第 4 阶段未勾选, 但同组 `notes` 与 `WORKLOG` 已经落了结论。
+    - 当前判断:
+      - 现象: task_plan 仍显示未完成。
+      - 假设: 这是一次收尾漏勾, 不是当前仍在推进的活跃工程。
+      - 证据: 同组 `WORKLOG__fastgs_colmap_compare.md` 已明确写出完成过程和总结, 且没有更晚的新记录。
+    - 判定: 未轮转旧支线, 但需要在摘要中保留这条“计划状态与工作记录不一致”的提醒。
+
+- 暂缓事项 / 后续方向(`LATER_PLANS*.md`):
+  - 默认组仍有 Blackwell 迁移与 `pytorch3d` 取舍问题。
+  - `__fastgs_refine_probe` 仍建议后续做 GPU benchmark。
+  - `__colmap_my6` / `__colmap_my7` 仍建议做轻量参数扫描, 但都不影响本轮归档。
+
+- 错误与根因(`ERRORFIX*.md`):
+  - `__fastdropgs_checkpoint_refine`: refined checkpoint 的文件名标签与恢复步数必须解耦。
+  - `__test_split_fallback`: 无 `partition.json` 时 train/test fallback 必须互斥。
+  - `__colmap_my5`: 调试脚本要用项目 `.pixi` Python, 不能误用系统 `python3`。
+
+- 重大风险 / 重要规律(`EPIPHANY_LOG*.md`):
+  - `__fastgs_refine_probe`: render 能不能并行, 要按 fixed-view 导出和 synthetic 主循环分层讨论。
+  - `__flux_reference_refine`: pipeline 里“预留了接口”不等于当前项目已具备双图参考修复能力。
+  - `__flux_kontext_change`: Kontext 首版最大的风险是接口语义不等于现有私有 refine 扩展。
+  - `__colmap_my5`: `to_refine/refine_c2ws.npy` 不能直接当作 `after_refine.mp4` 的真实相机轨迹。
+
+- 可复用点候选:
+  - `recon.export_3dgs_ply` 的稳定导出链路和正式 checkpoint 选择规则。
+  - refined checkpoint 的文件命名标签与恢复步数语义解耦。
+  - trajectory 导出时区分 `to_refine` driving 轨迹与真实 `after_refine` 相机轨迹。
+  - dataset fallback split 必须保证 train/test 互斥。
+
+- 最适合写到哪里:
+  - 项目级经验: `EXPERIENCE.md`
+  - 归档说明: `archive/manifests/`
+  - 当前不明显看到需要新建 cross-project `self-learning.*` skill 的点, 因为本轮发现以项目特有约定和项目内 bug 语义为主。
+
+- 需要同步的现有文档:
+  - 本轮未发现仓库内独立 `docs/` 或 `specs/` 目录需要同步的项目文档。
+  - `openspec/` 相关内容已经在 `__flux_kontext_change` 支线内落地, 本轮无需额外改写。
+
+- 是否需要新增或更新 `docs/` / `specs` / plan 文档:
+  - 否。
+  - 理由: 本轮主要是知识提炼与上下文治理, 不是新方案设计或接口变更。
+
+- 是否提取 / 更新 skill:
+  - 否。
+  - 理由: 现有发现更适合进入 `EXPERIENCE.md`, 暂时没有出现跨项目、已验证且值得单独召回的新 skill 粒度。
+
+## [2026-04-01 07:18:22] [Session ID: 019d47d8-459e-7a31-bf25-470119af4082] 笔记: 终态复核时发现 `__nspr_eval` 已完成
+
+## 来源
+
+### 来源1: `__nspr_eval` 新增的同组文件
+
+- 文件:
+  - `task_plan__nspr_eval.md`
+  - `notes__nspr_eval.md`
+  - `WORKLOG__nspr_eval.md`
+  - `LATER_PLANS__nspr_eval.md`
+  - `EPIPHANY_LOG__nspr_eval.md`
+- 要点:
+  - 在本轮持续学习执行过程中, `__nspr_eval` 从“只有 task_plan”变成了“整组文件已补齐”
+  - 最新 `task_plan__nspr_eval.md` 已把 4 个阶段全部勾选完成
+  - `WORKLOG__nspr_eval.md` 已记录最终交付口径:
+    - 仓库里没有真实 `NSPR`
+    - 本次应按 `PSNR` 解释并说明口径污染
+
+## 综合发现
+
+- 我在 `07:08:34` 那条六文件摘要里, 仍把 `__nspr_eval` 视为活跃任务
+- 终态复核的新证据推翻了这个判断:
+  - 该支线在本轮期间已经完成
+  - 根目录当前保留的当天支线, 更准确的状态是“当天刚完成, 暂不归档”, 而不是“仍有明确未完成任务”

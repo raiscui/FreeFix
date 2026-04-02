@@ -526,3 +526,123 @@
 ### 总结感悟
 - 这次改动已经为后续新启动或重启后的 rerun 准备好 `none` 模式
 - 运行中的 Python 任务不会自动重新读取 yaml, 所以“改配置”和“当前实例切换模式”必须明确区分
+
+## [2026-04-01 01:37:46] [Session ID: 019d436e-9bf6-7313-ab99-623578ee4ecf] 任务名称: 停掉旧 Flux rerun 并按 `refine_pipeline_offload_mode: none` 从 resume 点继续重跑
+
+### 任务内容
+- 停止仍在运行的旧 `ours.refine_by_flux` 实例, 避免新旧进程同时写同一输出目录
+- 轮转旧 [run.log](/root/autodl-tmp/home/rais/FreeFix/outputs/my5_colmap_fastgs_stable_35k_dense/flux_shinkai_museum_v2_pose_jitter_train_test_x3_20260330/run.log)
+- 用已改成 `none` 的配置重新启动:
+  - [flux_shinkai_museum_v2_35k_pose_jitter_train_test_x3_20260330.yaml](/root/autodl-tmp/home/rais/FreeFix/exp_cfg/my5/flux_shinkai_museum_v2_35k_pose_jitter_train_test_x3_20260330.yaml)
+- 验证这次重启不是“从头重跑”, 而是从最近 resume save 点继续
+
+### 完成过程
+- 先二次核对旧实例现场, 确认:
+  - 实时推进已到 `plan 92`
+  - 但最近一次 resume checkpoint 仍停在 `plan 75`
+- 然后对旧进程组 `-89870` 发送 `SIGINT`, 确认 `89870/89872/89873` 全部退出
+- 把旧日志轮转成:
+  - [run.log__before_resume_none_20260401_013618](/root/autodl-tmp/home/rais/FreeFix/outputs/my5_colmap_fastgs_stable_35k_dense/flux_shinkai_museum_v2_pose_jitter_train_test_x3_20260330/run.log__before_resume_none_20260401_013618)
+- 再以相同环境约束重新启动:
+  - `OMP_NUM_THREADS=1`
+  - `IMAGEIO_FFMPEG_EXE=/root/autodl-tmp/home/rais/FastGS/.pixi/envs/default/bin/ffmpeg`
+- 新会话是 `31543`, 新进程组是 `117765/117767/117768`
+- 启动后立刻验证:
+  - 日志出现 `pipe.to(cuda) 返回`
+  - 日志出现 `恢复 synthetic train pool: restored=75 next_plan_index=75/972`
+  - 目录先回退到 `render=075 / gen=074`, 随后继续推进到 `render=077 / gen=076`
+
+### 总结感悟
+- 这轮最关键的不是“把 yaml 改了”, 而是把旧实例和新实例严格切开
+- rolling checkpoint 的保存频率会决定中断后要不要重做一小段尾巴
+- 当前这轮已经证明 `none` 模式可以正常 resume, 后面如果要继续看性能, 就应该基于这条新实例来采样
+
+## [2026-04-01 18:17:27] [Session ID: 37900] 任务名称: 重新 bridge `ckpt_35000.pth`, 按新配置完整重跑 refine 并完成评估
+
+### 任务内容
+- 用 `/home/rais/FastGS/output/my5_nomask_v1/checkpoints/ckpt_35000.pth` 重新转换 FreeFix bridge checkpoint
+- 按修改后的 [flux_shinkai_museum_v2_35k_pose_jitter_train_test_x3_20260330.yaml](/root/autodl-tmp/home/rais/FreeFix/exp_cfg/my5/flux_shinkai_museum_v2_35k_pose_jitter_train_test_x3_20260330.yaml) 完整重跑 `refine`
+- 等待 watcher 自动接上 `ours.evaluation`, 并补齐 refined `point_cloud .ply`
+
+### 完成过程
+- 先确认旧同名实验输出已被安全备份, 避免覆盖污染
+- 再把原始 FastGS checkpoint 转成新的 FreeFix bridge 入口:
+  - [ckpt_35000_freefix.pt](/root/autodl-tmp/home/rais/FreeFix/data/fastgs_bridge/my5_nomask_v1/ckpt_35000_freefix.pt)
+- 之后用当前配置启动新的 `ours.refine_by_flux`, 并持续用:
+  - `refine_resume_state.json`
+  - `__resume_latest.pt`
+  - `refine/render|gen|depth`
+  这些真相源监控推进
+- 主循环最终完整跑到 `plan_total=566`, 然后自动导出 `after_refine` 并保存 final ckpt
+- watcher 自动接上 `ours.evaluation`, 产出 base/refined 两套 `train/test` 指标 json
+- 因 refined `point_cloud` 没自动生成, 最后用现有导出脚本补齐:
+  - [point_cloud_flux_shinkai_museum_v2_pose_jitter_train_test_x3_20260330.ply](/root/autodl-tmp/home/rais/FreeFix/outputs/my5_colmap_fastgs_stable_35k_dense/point_cloud_flux_shinkai_museum_v2_pose_jitter_train_test_x3_20260330.ply)
+
+### 总结感悟
+- 这轮结果已经证明, 当前修改后的配置口径可以稳定重跑并完整收尾
+- 本轮 refined ckpt 相比 base bridge ckpt, 在 `test/train` 两个 split 上都拿到了更好的 `PSNR/SSIM/LPIPS`
+- refined `point_cloud` 仍需要单独导出, 如果后面每轮都要交付 `ply`, 适合把导出动作接入主收尾链路
+
+## [2026-04-01 21:13:00] [Session ID: 2a213fb2-1d29-4f62-9c76-68a7700db14c] 任务名称: 落地“相邻镜头平均半径驱动 pose jitter 半径范围”
+
+### 任务内容
+- 补齐 `pose_jitter_trans_radius_mode / pose_jitter_neighbor_window / pose_jitter_neighbor_radius_scale` 从 wrapper 到 `Refiner` 的接线
+- 更新 [flux_shinkai_museum_v2_35k_pose_jitter_train_test_x3_20260330.yaml](/root/autodl-tmp/home/rais/FreeFix/exp_cfg/my5/flux_shinkai_museum_v2_35k_pose_jitter_train_test_x3_20260330.yaml), 显式启用 `neighbor_average_radius`
+- 为半径 cap、邻居半径计算和默认配置兼容补单测
+
+### 完成过程
+- 先回读当前支线记录和已经改过的 `pose_jitter / refiner` 代码, 确认这轮还缺的是:
+  - backend 参数传递
+  - 单测覆盖
+  - 实验 yaml 落参
+- 然后在 [refine_backend_runner.py](/root/autodl-tmp/home/rais/FreeFix/ours/refine_backend_runner.py) 新增 `build_refiner_runtime_kwargs(...)`
+  - 用统一 helper 把运行时参数整理给 `Refiner`
+  - 新字段全部用 `getattr(..., default)` 兜底
+- 接着在 [refiner.py](/root/autodl-tmp/home/rais/FreeFix/recon/refiner.py) 为 pose-only 相机序列加了 cache
+  - 避免每条 synthetic plan 都重新遍历整条相机序列
+- 再更新:
+  - [base.yaml](/root/autodl-tmp/home/rais/FreeFix/exp_cfg/base.yaml)
+  - [flux_shinkai_museum_v2_35k_pose_jitter_train_test_x3_20260330.yaml](/root/autodl-tmp/home/rais/FreeFix/exp_cfg/my5/flux_shinkai_museum_v2_35k_pose_jitter_train_test_x3_20260330.yaml)
+  让默认配置文档和当前实验配置都显式表达这套新语义
+- 最后补跑验证:
+  - `pytest` 路径先失败, 因为当前 pixi 环境缺少 `pytest`
+  - 改用 `unittest` 后通过:
+    - `tests.test_pose_jitter_refine`
+    - `tests.test_refine_view_plan`
+    - `tests.test_refine_cli_paths`
+    - `tests.test_run_fastgs_refine`
+
+### 总结感悟
+- 当前这版实现比较稳, 因为它没有粗暴推翻原本 `sigma/max` 的方向分布, 只是新增一个更贴近相机序列的半径上限
+- 在 `Refiner` 里对相机序列做 cache 很有必要, 不然这类按 plan 重复查询邻居半径的逻辑会有明显重复开销
+- 这轮已经把“可配置、可验证、可回退”的基本面搭好了, 后面如果还要继续收紧重影, 就可以更聚焦地调“半径分布”而不是先补 plumbing
+
+## [2026-04-01 21:29:00] [Session ID: 6f225887-9be2-454c-a76d-72780a9280bd] 任务名称: 把 `my5` 当前实验参数调成“邻居半径主导型”
+
+### 任务内容
+- 量化 `my5 train` 相邻镜头平均半径分布
+- 根据真实距离分布, 调整当前实验 yaml 里的 `pose_jitter_trans_sigma / trans_max / neighbor_radius_scale`
+- 让新加入的 `neighbor_average_radius` 不只是“挂着”, 而是更常成为实际主导限制
+
+### 完成过程
+- 先沿正式真相源读取:
+  - [cfg.json](/root/autodl-tmp/home/rais/FreeFix/outputs/my5_colmap_fastgs_stable_35k_dense/cfg.json)
+  - `/home/rais/FastGS/data/my5_colmap_fastgs`
+  - `train_dataset.indices`
+- 实测得到 `avg_neighbor` 分布大致为:
+  - `p25 ≈ 0.1005`
+  - `p50 ≈ 0.1331`
+  - `p75 ≈ 0.2026`
+  - `p90 ≈ 0.4731`
+- 根据这个量级判断:
+  - 旧的 `trans_sigma=0.03` 太小
+  - 多数镜头还没碰到邻居半径 cap, 就已经停在原本高斯抖动量级里了
+- 最后把 [flux_shinkai_museum_v2_35k_pose_jitter_train_test_x3_20260330.yaml](/root/autodl-tmp/home/rais/FreeFix/exp_cfg/my5/flux_shinkai_museum_v2_35k_pose_jitter_train_test_x3_20260330.yaml) 调成:
+  - `pose_jitter_trans_sigma: [0.10, 0.10, 0.10]`
+  - `pose_jitter_trans_max: [0.50, 0.50, 0.50]`
+  - `pose_jitter_neighbor_radius_scale: 0.85`
+
+### 总结感悟
+- 这次最关键的不是“改大参数”, 而是把参数和场景真实镜头间距对齐
+- `trans_sigma` 偏小的时候, 即使开了邻居半径模式, 实际上还是旧高斯分布在主导
+- 适度降低 `neighbor_radius_scale` 到 `0.85`, 是为了让“邻居半径主导”这件事更稳, 而不是直接顶满邻居距离

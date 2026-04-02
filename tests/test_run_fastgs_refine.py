@@ -36,6 +36,23 @@ class RunFastGSRefineTest(unittest.TestCase):
         self.assertEqual(args.ckpt_path, Path("/tmp/demo_fastgs.pth"))
         self.assertEqual(args.refine_backend, "flux")
 
+    def test_parser_accepts_kontext_backend(self) -> None:
+        parser = build_arg_parser()
+        args = parser.parse_args(
+            [
+                "--exp-cfg",
+                "exp_cfg/demo.yaml",
+                "--colmap-path",
+                "/tmp/demo_scene",
+                "--ckpt-path",
+                "/tmp/demo_fastgs.pth",
+                "--refine-backend",
+                "kontext",
+            ]
+        )
+
+        self.assertEqual(args.refine_backend, "kontext")
+
     def test_parser_accepts_final_ply_output_arg(self) -> None:
         parser = build_arg_parser()
         args = parser.parse_args(
@@ -99,6 +116,20 @@ class RunFastGSRefineTest(unittest.TestCase):
         command = build_refine_command(args, bridge_output)
 
         self.assertEqual(command[:3], [sys.executable, "-m", "ours.refine_by_sdxl"])
+        self.assertEqual(command[-1], str(bridge_output))
+
+    def test_build_refine_command_routes_kontext_backend(self) -> None:
+        args = SimpleNamespace(
+            refine_backend="kontext",
+            exp_cfg=Path("exp_cfg/demo.yaml"),
+            base_cfg=Path("exp_cfg/base.yaml"),
+            colmap_path=Path("/tmp/scene"),
+        )
+        bridge_output = Path("/tmp/bridge.pt")
+
+        command = build_refine_command(args, bridge_output)
+
+        self.assertEqual(command[:3], [sys.executable, "-m", "ours.refine_by_kontext"])
         self.assertEqual(command[-1], str(bridge_output))
 
     def test_build_export_command_targets_export_cli(self) -> None:
@@ -213,6 +244,7 @@ class RunFastGSRefineTest(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertIn("FastGS / fast-dropgs 导入并启动 FreeFix refine", result.stdout)
+        self.assertIn("kontext", result.stdout)
 
 
 if __name__ == "__main__":

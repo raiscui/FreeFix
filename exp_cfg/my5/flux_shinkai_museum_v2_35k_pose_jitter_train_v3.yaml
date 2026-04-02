@@ -1,0 +1,90 @@
+# `my5` 的正式 pose jitter refine 配置。
+# 这轮按用户要求:
+# - synthetic source pool 当前只吃 train 镜头
+# - 每个基镜头当前抖出 2 个视角
+# - jitter 再比上一轮 stronger 更大一档
+
+base_dir: outputs/my5_colmap_fastgs_stable_35k_dense
+exp_name: kontext_pose_jitter_train_kontext
+
+# ------------------------------------------------------------------
+# fixed-view 对比仍然保留一小段固定窗口, 便于 before / after 直接对照。
+# synthetic supervise 则不再受这个窗口限制, 会由下面的多 split plan 单独展开。
+# ------------------------------------------------------------------
+refine_start_idx: 0
+refine_end_idx: 41
+
+train_start_idx: 0
+train_end_idx: 283
+
+test_split: test
+test_trans: [0, 0, 0]
+test_rots: [0, 0, 0]
+
+prompt: "high detail. Refine images, Ghost artifact removal, image quality enhancement, and restoration of compression artifacts. repair visual errors  in AI-generated images, perform defogging and enhance clarity. Correct unreasonable elements, data errors and illogical content in the images"
+# Kontext 这里继续只调 prompt, 目标是:
+# - 柔和
+# - 干净
+# - 丝滑
+# - 不脏
+# - 不颗粒
+# 仍然保持超短, 避免 prompt 截断。
+kontext_prompt: "Soft clean silky finish. remove dust, smooth air. image clear and sharp.Fix structural errors using the reference image."
+kontext_negative_prompt: "dust, airborne particles, dirty air, speckles, grain, grime, haze, fog, smoke, dirty spots, noisy texture, gritty, harsh edges, crunchy detail, oversharpened, overprocessed, clutter"
+
+strength: 0.65
+refine_steps: 400
+warp_ratio: 0.01
+gen_prob: 0.2
+
+
+
+hessian_attr: ["means", "quats", "scales"]
+
+data_type: colmap
+load_step: 35000
+load_ckpt_path: outputs/my5_colmap_fastgs_stable_35k_dense/ckpts/ckpt_flux_shinkai_museum_v2_fastgs_my5_nomask_v1_35000_fixsh_rerun.pt
+
+flux_model_path: /home/rais/.cache/modelscope/hub/models/black-forest-labs/FLUX.1-dev
+refine_pipeline_offload_mode: none
+
+refine_camera_mode: pose_jitter
+
+# ------------------------------------------------------------------
+# 当前真实监督池和 synthetic source pool 都只吃 train。
+# 如果后面要扩成 train + test, 再改这两个 split 配置即可。
+# 当前 synthetic plan 总数 = train 镜头数 * 2。
+# ------------------------------------------------------------------
+refine_train_splits: [train]
+refine_camera_source_splits: [train]
+pose_jitter_views_per_source: 1
+
+# ------------------------------------------------------------------
+# 比上一轮 stronger 再放大一档。
+# 目标不是极端跳视角, 而是让 synthetic render 明显离开原镜头,
+# 逼着 Flux 去补局部新视角的外观细节。
+# 但总平移半径不再只靠固定阈值控制, 而是额外收敛到:
+# - 当前镜头
+# - 前一个镜头
+# - 后一个镜头
+# 三者里“相邻距离”的平均半径范围。
+# 这轮进一步把参数调成“邻居半径主导型”:
+# - 提高 `trans_sigma`, 让采样更常碰到邻居半径 cap
+# - 保留较宽的 `trans_max`, 避免它比邻居半径更早成为主导限制
+# - 略微把 `neighbor_radius_scale` 压到 0.85, 减少直接顶满相邻距离带来的重影风险
+# ------------------------------------------------------------------
+pose_jitter_trans_sigma: [0.50, 0.50, 0.50]
+pose_jitter_trans_max: [2.50, 2.50, 2.50]
+pose_jitter_trans_radius_mode: neighbor_average_radius
+pose_jitter_neighbor_window: 4
+pose_jitter_neighbor_radius_scale: 1
+pose_jitter_rot_sigma_deg: [2.0, 2.0, 2.0]
+pose_jitter_rot_max_deg: [4.0, 4.0, 4.0]
+pose_jitter_max_attempts: 4
+pose_jitter_alpha_threshold: 0.05
+pose_jitter_min_alpha_coverage: 0.03
+
+#  --refine-backend kontext
+kontext_model_path: /home/rais/.cache/modelscope/hub/models/black-forest-labs/FLUX.1-Kontext-dev
+kontext_strength: 0.50
+kontext_num_inference_steps: 55
