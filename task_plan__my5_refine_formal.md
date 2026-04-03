@@ -162,3 +162,95 @@
 ## 状态
 
 **目前在阶段5** - 正在直接用原 yaml 启动 Kontext 正式 run。
+
+## [2026-04-02 06:03:13] [Session ID: omx-1775103327604-vnl611] [记录类型]: 用户修改 `kontext_prompt`, 改为停旧进程后重跑
+
+- 已验证事实:
+  - 当前 `ours.refine_by_kontext` 进程组仍在运行
+  - 它不会热更新读取新的 yaml
+  - 当前磁盘上的 `kontext_prompt` 已被用户改写
+- 决策:
+  - 停掉旧 Kontext 进程组
+  - 备份旧 prompt 下的半截输出与 rolling checkpoint
+  - 直接按同一份 yaml 重跑 Kontext
+
+## 状态
+
+**目前在阶段5** - 正在终止旧 Kontext run, 然后按新 prompt 重跑。
+
+## [2026-04-02 07:59:32] [Session ID: omx-1775103327604-vnl611] [记录类型]: Kontext 新 prompt 版已完成, 开始导出与对比
+
+- 已验证终态:
+  - `ckpt_kontext_pose_jitter_train_kontext.pt` 已落盘
+  - `kontext process exit_code=0`
+- 当前剩余交付:
+  1. 导出 Flux refined ply
+  2. 导出 Kontext refined ply
+  3. 跑 Flux / Kontext evaluation
+  4. 汇总指标对比
+
+## 阶段
+
+- [x] 阶段1: 回读经验、现有上下文、配置与旧产物状态
+- [x] 阶段2: 备份旧同名产物并准备正式启动环境
+- [x] 阶段3: 启动正式 Flux run 并确认已进入主循环
+- [x] 阶段4: 监控直到 Flux 完整结束并确认 final checkpoint 落盘
+- [x] 阶段5: 按最新 prompt 完成 Kontext 正式 run
+- [ ] 阶段6: 导出 Flux / Kontext refined ply
+- [ ] 阶段7: 运行 Flux / Kontext evaluation 并做对比
+- [ ] 阶段8: 写回最终交付记录
+
+## 状态
+
+**目前在阶段6** - 正在导出两份 refined ply, 然后接 evaluation 对比。
+
+## [2026-04-02 08:07:00] [Session ID: omx-1775103327604-vnl611] [记录类型]: 两份 refined ply 已导出, 开始跑 evaluation 对比
+
+- 已完成:
+  - `point_cloud_flux_shinkai_museum_v2_pose_jitter_train_test_x3_20260330.ply`
+  - `point_cloud_kontext_pose_jitter_train_kontext.ply`
+- 下一步:
+  - 为 Flux 生成一份只用于 evaluation 的临时 yaml, 恢复其 `exp_name`
+  - 分别运行 Flux / Kontext evaluation
+  - 汇总 train/test 指标对比
+
+## 阶段
+
+- [x] 阶段1: 回读经验、现有上下文、配置与旧产物状态
+- [x] 阶段2: 备份旧同名产物并准备正式启动环境
+- [x] 阶段3: 启动正式 Flux run 并确认已进入主循环
+- [x] 阶段4: 监控直到 Flux 完整结束并确认 final checkpoint 落盘
+- [x] 阶段5: 按最新 prompt 完成 Kontext 正式 run
+- [x] 阶段6: 导出 Flux / Kontext refined ply
+- [ ] 阶段7: 运行 Flux / Kontext evaluation 并做对比
+- [ ] 阶段8: 写回最终交付记录
+
+## 状态
+
+**目前在阶段7** - 正在生成 Flux evaluation 临时配置, 并开始两边评估。
+
+## [2026-04-02 08:46:02] [Session ID: omx-1775103327604-vnl611] [记录类型]: 阶段6到阶段8完成
+
+- 已完成:
+  - Flux refined ply 导出
+  - Kontext refined ply 导出
+  - Flux evaluation 完成
+  - Kontext evaluation 完成
+  - Flux / Kontext 指标对比完成
+- 关键结论:
+  - 当前这组结果中, Kontext 在 train/test 的 `PSNR / SSIM / LPIPS` 三项上都优于 Flux
+
+## 阶段
+
+- [x] 阶段1: 回读经验、现有上下文、配置与旧产物状态
+- [x] 阶段2: 备份旧同名产物并准备正式启动环境
+- [x] 阶段3: 启动正式 Flux run 并确认已进入主循环
+- [x] 阶段4: 监控直到 Flux 完整结束并确认 final checkpoint 落盘
+- [x] 阶段5: 按最新 prompt 完成 Kontext 正式 run
+- [x] 阶段6: 导出 Flux / Kontext refined ply
+- [x] 阶段7: 运行 Flux / Kontext evaluation 并做对比
+- [x] 阶段8: 写回最终交付记录
+
+## 状态
+
+**目前已完成** - Flux / Kontext 的 refined ply 与指标对比都已完成。

@@ -53,7 +53,8 @@ refine_camera_mode: pose_jitter
 # ------------------------------------------------------------------
 # 当前真实监督池和 synthetic source pool 都只吃 train。
 # 如果后面要扩成 train + test, 再改这两个 split 配置即可。
-# 当前 synthetic plan 总数 = train 镜头数 * 2。
+# 当前 `pose_jitter_views_per_source = 1`, 因此 synthetic plan 总数 = train 镜头数。
+# 如果后面改成 `1/2` 这类分数, 语义会变成按比例稳定抽样 source pool。
 # ------------------------------------------------------------------
 refine_train_splits: [train]
 refine_camera_source_splits: [train]

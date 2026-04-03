@@ -32,3 +32,26 @@
 - 对复用旧 `exp_name` 的正式重跑, 先隔离旧 final 产物, 比“直接覆盖再观察”稳得多
 - `readlink -f .pixi/.../ffmpeg` 这类路径推断不能替代真实 `ls` 或 `which ffmpeg` 验证
 - 这次真正需要的不是改代码, 而是把运行入口、ffmpeg 路径和旧产物现场治理做对
+## [2026-04-02 08:46:02] [Session ID: omx-1775103327604-vnl611] 任务名称: 补导出 Flux / Kontext refined ply 并完成指标对比
+
+### 任务内容
+- 为最终完成的 Flux refined checkpoint 导出 `ply`
+- 为最终完成的 Kontext refined checkpoint 导出 `ply`
+- 分别运行 Flux / Kontext evaluation
+- 汇总 base / Flux / Kontext 的 train/test 指标差异
+
+### 完成过程
+- 先导出两份 refined point cloud:
+  - `point_cloud_flux_shinkai_museum_v2_pose_jitter_train_test_x3_20260330.ply`
+  - `point_cloud_kontext_pose_jitter_train_kontext.ply`
+- 随后发现当前磁盘上的 `v3` yaml 已经切到 Kontext `exp_name`, 因此为 Flux 额外生成一份只用于 evaluation 的临时 yaml:
+  - `/tmp/freefix_my5_flux_eval_20260402T084602Z.yaml`
+- 用 `ours.evaluation --eval_test` 重新跑两边评估, 产出:
+  - Flux: `.../flux_shinkai_museum_v2_pose_jitter_train_test_x3_20260330/eval/*.json`
+  - Kontext: `.../kontext_pose_jitter_train_kontext/eval/*.json`
+- 再读取 `35000_{train,test}.json` 与 refined `*_ {train,test}.json`, 并用 `jd` 做 refined json 差异核对
+
+### 总结感悟
+- 这轮真正重要的不是“有没有 refined 结果”, 而是把 Flux / Kontext 放回同一个 base 指标基线下比较
+- 当前这组结果里, Kontext 在 train/test 的 `PSNR / SSIM / LPIPS` 三项上都优于 Flux
+- 对这种多轮重跑任务, `exp_name` 和评估配置一定要与真实 checkpoint 对齐, 否则很容易读错结果

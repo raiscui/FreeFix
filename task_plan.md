@@ -77,3 +77,28 @@
 - 启用原因:
   - 本次任务是 refine 参数语义修正
   - 需要把“比例参数支持、plan 展开验证、回归测试”与其他 refine 运行支线隔离记录
+
+## [2026-04-02 06:02:52] [Session ID: session-20260402T060252Z-continuous-learning] [记录类型]: 登记支线 `continuous_learning`
+
+- 启用独立上下文集:
+  - `task_plan__continuous_learning.md`
+  - `notes__continuous_learning.md`
+  - `WORKLOG__continuous_learning.md`
+  - `LATER_PLANS__continuous_learning.md`
+  - `EPIPHANY_LOG__continuous_learning.md`
+  - `ERRORFIX__continuous_learning.md`
+- 启用原因:
+  - 本次任务是显式触发的持续学习与归档整理
+  - 需要把“六文件摘要、归档决定、经验沉淀、文档同步”与功能实现支线隔离记录
+
+## [2026-04-02 06:02:52] [Session ID: session-20260402T060252Z-continuous-learning] [记录类型]: 更新当前根目录活跃支线索引
+
+- 本轮持续学习已完成归档:
+  - `__fastgs_refine_probe -> archive/branch_contexts/fastgs_refine_probe/`
+  - `__flux_shinkai_ply_export -> archive/branch_contexts/flux_shinkai_ply_export/`
+  - `__nspr_eval -> archive/branch_contexts/nspr_eval/`
+- 当前根目录仍保留的当天支线:
+  - `__add_optional_flux_kontext_refine`
+  - `__my5_refine_formal`
+  - `__pose_jitter_fraction`
+  - `__continuous_learning`

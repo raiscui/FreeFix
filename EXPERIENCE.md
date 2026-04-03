@@ -12,6 +12,10 @@
   - `Flux gen` 依赖当前 `render` 输出。
   - 下一条 plan 的 render 又依赖上一条 `refiner.refine(...)` 之后的新高斯状态。
   - 所以默认语义下, 不应直接把多条 jitter plan 并发起来跑。
+- `pose_jitter_views_per_source` 现在不再只是“整数重复次数”。
+  - 正整数仍表示每个 source 重复几次。
+  - `1/2`、`1/3` 这类正分数表示稳定抽样密度, 例如 `1/2` 是“每 2 个 source 保留 1 个”。
+  - 这条链路必须保持确定性, 不要把它改成随机抽样, 否则 `plan_index / image_id / resume` 契约会被破坏。
 - `black-forest-labs/FLUX.1-dev` 从 Hugging Face 直接取 `model_index.json` 时, 当前会命中 `GatedRepo`。
   - 现象上会表现成 rerun 在冷启动后提前退出。
   - 这时优先切到 ModelScope 官方 CLI/SDK 路线, 不要继续围绕 HF 失效地址硬补。

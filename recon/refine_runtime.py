@@ -43,6 +43,39 @@ def resolve_strategy_step(
     return max(0, int(strategy_resume_step)) + max(0, int(local_step))
 
 
+def resolve_strategy_control_step(
+    *,
+    strategy_resume_step: int,
+    local_step: int,
+    cumulative_refine_step: Optional[int] = None,
+    refine_virtual_step: Optional[int] = None,
+) -> int:
+    """解析传给 densification/prune strategy 的控制步数。
+
+    默认行为保持旧语义:
+    - 直接沿用原训练时间轴上的真实步数。
+
+    当显式提供 `refine_virtual_step` 时:
+    - strategy 的阈值比较改走“本次 refine 的虚拟时间轴”;
+    - 其中进度使用累计 refine 步数 `cumulative_refine_step`, 避免每次单条 synthetic plan
+      进入 `refiner.refine()` 时局部步数又从 0 开始, 导致 strategy 反复回到同一阈值区间。
+    - checkpoint 保存时的真实 `step` 仍应继续使用 `resolve_strategy_step()`,
+      不受这里影响。
+    """
+
+    if refine_virtual_step is None:
+        return resolve_strategy_step(
+            strategy_resume_step=strategy_resume_step,
+            local_step=local_step,
+        )
+
+    progress_step = cumulative_refine_step
+    if progress_step is None:
+        progress_step = local_step
+
+    return max(0, int(refine_virtual_step)) + max(0, int(progress_step))
+
+
 def chunk_items(items: Sequence[Any], chunk_size: int) -> Iterator[Sequence[Any]]:
     """把序列按固定大小切块, 供批量渲染等场景复用。"""
     normalized_chunk_size = int(chunk_size)

@@ -22,7 +22,11 @@ from recon.pose_jitter import (
     sample_bounded_pose_jitter,
     select_pose_jitter_candidate,
 )
-from recon.refine_runtime import resolve_strategy_resume_step, resolve_strategy_step
+from recon.refine_runtime import (
+    resolve_strategy_control_step,
+    resolve_strategy_resume_step,
+    resolve_strategy_step,
+)
 from recon.trainer import Config, soft_sigmoid
 from recon.runtime_env import bootstrap_pixi_cuda_env
 
@@ -59,6 +63,15 @@ class Refiner:
         pose_jitter_trans_radius_mode: str = "disabled",
         pose_jitter_neighbor_window: int = 1,
         pose_jitter_neighbor_radius_scale: float = 1.0,
+        refine_virtual_step: Optional[int] = None,
+        refine_start_iter: Optional[int] = None,
+        refine_stop_iter: Optional[int] = None,
+        reset_every: Optional[int] = None,
+        refine_every: Optional[int] = None,
+        prune_opa: Optional[float] = None,
+        grow_grad2d: Optional[float] = None,
+        grow_scale3d: Optional[float] = None,
+        prune_scale3d: Optional[float] = None,
     ):
         self.cfg = cfg
         self.device = "cuda"
@@ -131,6 +144,40 @@ class Refiner:
         self.pose_jitter_neighbor_window = max(0, int(pose_jitter_neighbor_window))
         self.pose_jitter_neighbor_radius_scale = max(0.0, float(pose_jitter_neighbor_radius_scale))
         self.pose_jitter_pose_sequence_cache: Dict[Tuple[str, bool], List[Tensor]] = {}
+        self.refine_virtual_step = (
+            None if refine_virtual_step is None else max(0, int(refine_virtual_step))
+        )
+        self.strategy_refine_start_iter = max(
+            0,
+            int(cfg.refine_start_iter if refine_start_iter is None else refine_start_iter),
+        )
+        self.strategy_refine_stop_iter = max(
+            0,
+            int(cfg.refine_stop_iter if refine_stop_iter is None else refine_stop_iter),
+        )
+        self.strategy_reset_every = max(
+            1,
+            int(cfg.reset_every if reset_every is None else reset_every),
+        )
+        self.strategy_refine_every = max(
+            1,
+            int(cfg.refine_every if refine_every is None else refine_every),
+        )
+        self.strategy_prune_opa = float(cfg.prune_opa if prune_opa is None else prune_opa)
+        self.strategy_grow_grad2d = float(
+            cfg.grow_grad2d if grow_grad2d is None else grow_grad2d
+        )
+        self.strategy_grow_scale3d = float(
+            cfg.grow_scale3d if grow_scale3d is None else grow_scale3d
+        )
+        self.strategy_prune_scale3d = float(
+            cfg.prune_scale3d if prune_scale3d is None else prune_scale3d
+        )
+        if self.strategy_refine_stop_iter < self.strategy_refine_start_iter:
+            raise ValueError(
+                "refine_stop_iter 不能小于 refine_start_iter: "
+                f"{self.strategy_refine_stop_iter} < {self.strategy_refine_start_iter}"
+            )
 
         # Load the refine dataset
         # self.refine_dataset = Refine_Dataset(os.path.join(cfg.result_dir, "to_refine"))
@@ -180,14 +227,14 @@ class Refiner:
         self.strategy = DefaultStrategy(
             verbose=True,
             # scene_scale=self.scene_scale,
-            prune_opa=cfg.prune_opa,
-            grow_grad2d=cfg.grow_grad2d,
-            grow_scale3d=cfg.grow_scale3d,
-            prune_scale3d=cfg.prune_scale3d,
-            refine_start_iter=100,
-            refine_stop_iter=5000,
-            reset_every=1500,
-            refine_every=200,
+            prune_opa=self.strategy_prune_opa,
+            grow_grad2d=self.strategy_grow_grad2d,
+            grow_scale3d=self.strategy_grow_scale3d,
+            prune_scale3d=self.strategy_prune_scale3d,
+            refine_start_iter=self.strategy_refine_start_iter,
+            refine_stop_iter=self.strategy_refine_stop_iter,
+            reset_every=self.strategy_reset_every,
+            refine_every=self.strategy_refine_every,
             absgrad=cfg.absgrad,
             revised_opacity=cfg.revised_opacity,
         )
@@ -799,9 +846,11 @@ class Refiner:
             # strategy 则必须继续沿用原训练时间轴, 避免成熟 checkpoint 在 step=0
             # 被误触发 `reset_opa()`。
             # ------------------------------------------------------------------
-            strategy_step = resolve_strategy_step(
+            strategy_step = resolve_strategy_control_step(
                 strategy_resume_step=self.strategy_resume_step,
                 local_step=step,
+                cumulative_refine_step=self.total_step,
+                refine_virtual_step=self.refine_virtual_step,
             )
 
             if step<=max_steps*1/3:

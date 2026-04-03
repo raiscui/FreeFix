@@ -130,3 +130,25 @@ def resolve_local_model_source(
             return str(candidate), True
 
     return default_repo_id, False
+
+
+def resolve_refine_seed(
+    cfg,
+    *,
+    backend_name: str,
+    default_seed: int = 64,
+) -> int:
+    """解析某条 refine backend 的随机种子。
+
+    优先级:
+    1. `<backend_name>_seed`，例如 `flux_seed` / `kontext_seed`
+    2. `refine_seed`
+    3. `default_seed`
+    """
+    backend_key = f"{backend_name}_seed"
+    raw_value = getattr(cfg, backend_key, None)
+    if raw_value in (None, ""):
+        raw_value = getattr(cfg, "refine_seed", None)
+    if raw_value in (None, ""):
+        return int(default_seed)
+    return int(raw_value)

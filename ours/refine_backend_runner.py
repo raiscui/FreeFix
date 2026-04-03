@@ -60,6 +60,15 @@ def build_refiner_runtime_kwargs(cfg, *, load_ckpt_path: str | None) -> dict[str
         "pose_jitter_trans_radius_mode": getattr(cfg, "pose_jitter_trans_radius_mode", "disabled"),
         "pose_jitter_neighbor_window": getattr(cfg, "pose_jitter_neighbor_window", 1),
         "pose_jitter_neighbor_radius_scale": getattr(cfg, "pose_jitter_neighbor_radius_scale", 1.0),
+        "refine_virtual_step": getattr(cfg, "refine_virtual_step", None),
+        "refine_start_iter": getattr(cfg, "refine_start_iter", None),
+        "refine_stop_iter": getattr(cfg, "refine_stop_iter", None),
+        "reset_every": getattr(cfg, "reset_every", None),
+        "refine_every": getattr(cfg, "refine_every", None),
+        "prune_opa": getattr(cfg, "prune_opa", None),
+        "grow_grad2d": getattr(cfg, "grow_grad2d", None),
+        "grow_scale3d": getattr(cfg, "grow_scale3d", None),
+        "prune_scale3d": getattr(cfg, "prune_scale3d", None),
     }
 
 

@@ -1,20 +1,20 @@
 {
-  "pid": 4418,
-  "parent_pid": 4293,
-  "started_at": "2026-04-02T04:15:29.340Z",
+  "pid": 2125,
+  "parent_pid": 2100,
+  "started_at": "2026-04-03T01:59:13.037Z",
   "cwd": "/root/autodl-tmp/home/rais/FreeFix",
   "notify_script": "/root/autodl-tmp/home/rais/.local/share/fnm/node-versions/v24.14.1/installation/lib/node_modules/oh-my-codex/dist/scripts/notify-hook.js",
   "poll_ms": 250,
   "pid_file": "/root/autodl-tmp/home/rais/FreeFix/.omx/state/notify-fallback.pid",
   "max_lifetime_ms": 21600000,
-  "tracked_files": 2,
+  "tracked_files": 1,
   "seen_turns": 0,
   "dispatch_drain": {
     "enabled": true,
     "max_per_tick": 5,
-    "run_count": 23117,
+    "run_count": 72462,
     "leader_only": true,
-    "last_tick_at": "2026-04-02T06:02:08.262Z",
+    "last_tick_at": "2026-04-03T07:59:12.869Z",
     "last_result": {
       "processed": 0,
       "skipped": 0,
@@ -27,16 +27,16 @@
     "leader_only": true,
     "stale_threshold_ms": 180000,
     "precomputed_leader_stale": true,
-    "last_tick_at": "2026-04-02T06:02:08.262Z",
+    "last_tick_at": "2026-04-03T07:59:12.870Z",
     "last_error": null,
-    "run_count": 23117
+    "run_count": 72462
   },
   "ralph_continue_steer": {
     "enabled": true,
     "cadence_ms": 60000,
     "message": "Ralph loop active continue",
     "active": false,
-    "last_state_check_at": "2026-04-02T06:02:08.293Z",
+    "last_state_check_at": "2026-04-03T07:59:12.912Z",
     "last_sent_at": "",
     "cooldown_anchor_at": "",
     "last_reason": "blocked_by_current_session",
@@ -52,13 +52,16 @@
   "fallback_auto_nudge": {
     "enabled": true,
     "stall_ms": 5000,
-    "last_tick_at": "2026-04-02T06:02:08.288Z",
-    "last_turn_at": "2026-04-02T05:33:31.996Z",
-    "last_turn_count": 3,
-    "last_message": "已经把 `pose_jitter_views_per_source` 做成“整数重复 + 分数抽样”双语义了。\n\n核心改动在 [recon/refine_view_plan.py](/root/aut",
+    "last_tick_at": "2026-04-03T07:59:12.902Z",
+    "last_turn_at": "2026-04-03T06:42:05.466Z",
+    "last_turn_count": 16,
+    "last_message": "跑完了。\n\n## 本次整轮 refine\n配置：\n- `exp_cfg/my5/flux_shinkai_museum_v2_35k_pose_jitter_train_v5_net_prune_he",
     "last_reason": "eligible_but_not_sent",
     "last_error": null,
     "last_nudged_signature": "",
     "last_nudged_at": ""
-  }
+  },
+  "stop_reason": "max_lifetime_exceeded",
+  "stop_signal": null,
+  "stopping": true
 }

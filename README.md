@@ -196,11 +196,14 @@ Notes:
   - `pose_jitter_rot_sigma_deg: [1.5, 1.5, 1.5]`
   - `pose_jitter_rot_max_deg: [4.0, 4.0, 4.0]`
 - `before_refine` / `after_refine` stay on the fixed comparison views from `refine_start_idx` to `refine_end_idx`.
-- If you want every source camera to branch into multiple synthetic views, set `pose_jitter_views_per_source`.
+- `pose_jitter_views_per_source` supports either:
+  - a positive integer, meaning "repeat each source camera N times"
+  - a positive fraction string like `1/2` or `1/4`, meaning "keep a stable subset of the source pool at that density"
 - If you want pose jitter to draw from multiple named splits, use:
   - `refine_camera_source_splits: [train, test]`
   - `refine_train_splits: [train, test]`
 - Example: if `train + test` gives `324` source cameras and `pose_jitter_views_per_source: 3`, the synthetic supervise plan becomes `972` views.
+- Example: if `train` gives `283` source cameras and `pose_jitter_views_per_source: 1/4`, the synthetic supervise plan becomes a stable subset of `71` views.
 - Leaving `refine_train_splits` / `refine_camera_source_splits` unset keeps the old range-based behavior.
 - Do not include benchmark eval cameras unless you explicitly accept that the refine run will change the evaluation semantics.
 - Each run writes `refine/pose_jitter_log.jsonl`, which records sampling attempts, alpha-coverage filtering, and fallback decisions.

@@ -11,6 +11,7 @@ from recon.refine_runtime import (
     build_generated_camera_log_path,
     build_refine_resume_checkpoint_path,
     build_refine_resume_state,
+    resolve_strategy_control_step,
     build_refine_resume_state_path,
     cleanup_stale_resume_artifacts,
     load_refine_resume_state,
@@ -63,6 +64,40 @@ class RefineRuntimeStepTest(unittest.TestCase):
         self.assertEqual(
             resolve_strategy_step(strategy_resume_step=resume_step, local_step=4),
             35003,
+        )
+
+    def test_strategy_control_step_defaults_to_original_training_timeline(self) -> None:
+        resume_step = resolve_strategy_resume_step(payload_step=34999, load_step=12000)
+        self.assertEqual(
+            resolve_strategy_control_step(
+                strategy_resume_step=resume_step,
+                local_step=4,
+            ),
+            35003,
+        )
+
+    def test_strategy_control_step_can_use_virtual_refine_timeline(self) -> None:
+        resume_step = resolve_strategy_resume_step(payload_step=34999, load_step=12000)
+        self.assertEqual(
+            resolve_strategy_control_step(
+                strategy_resume_step=resume_step,
+                local_step=4,
+                cumulative_refine_step=37,
+                refine_virtual_step=100,
+            ),
+            137,
+        )
+
+    def test_strategy_control_step_falls_back_to_local_step_when_cumulative_missing(self) -> None:
+        resume_step = resolve_strategy_resume_step(payload_step=34999, load_step=12000)
+        self.assertEqual(
+            resolve_strategy_control_step(
+                strategy_resume_step=resume_step,
+                local_step=4,
+                cumulative_refine_step=None,
+                refine_virtual_step=100,
+            ),
+            104,
         )
 
 

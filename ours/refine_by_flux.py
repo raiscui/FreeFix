@@ -9,6 +9,7 @@ from ours.refine_backend_common import (
     build_stage_logger,
     resolve_local_model_source,
     resolve_optional_checkpoint_path,
+    resolve_refine_seed,
 )
 from ours.refine_backend_runner import BackendRuntime, run_backend_refine
 from ours.refine_pipeline_runtime import (
@@ -69,7 +70,9 @@ def build_backend_runtime(cfg, log_runtime_stage) -> BackendRuntime:
     log_runtime_stage(f"pipeline execution device: {execution_device}")
     log_runtime_stage("Flux pipeline 加载完成")
 
-    generator = torch.manual_seed(64)
+    seed = resolve_refine_seed(cfg, backend_name="flux", default_seed=64)
+    log_runtime_stage(f"Flux refine seed: {seed}")
+    generator = torch.manual_seed(seed)
     infer_steps = int(cfg.num_inference_steps * cfg.strength)
     mask_scheduler = [int(infer_steps * cfg.c_scheduler[i]) for i in range(len(cfg.c_scheduler))]
 

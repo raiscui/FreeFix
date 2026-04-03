@@ -11,6 +11,7 @@ from ours.refine_backend_common import (
     build_stage_logger,
     resolve_local_model_source,
     resolve_optional_checkpoint_path,
+    resolve_refine_seed,
 )
 from ours.refine_backend_runner import BackendRuntime, run_backend_refine
 from ours.refine_pipeline_runtime import (
@@ -237,7 +238,9 @@ def build_backend_runtime(cfg, log_runtime_stage) -> BackendRuntime:
         setattr(inpaint_pipe, "_execution_device", execution_device)
     log_runtime_stage("Kontext inpaint pipeline 构建完成")
 
-    generator = torch.manual_seed(64)
+    seed = resolve_refine_seed(cfg, backend_name="kontext", default_seed=64)
+    log_runtime_stage(f"Kontext refine seed: {seed}")
+    generator = torch.manual_seed(seed)
     guidance_scale = float(getattr(cfg, "kontext_guidance_scale", 2.5))
     num_inference_steps = int(getattr(cfg, "kontext_num_inference_steps", cfg.num_inference_steps))
     strength = float(getattr(cfg, "kontext_strength", cfg.strength))

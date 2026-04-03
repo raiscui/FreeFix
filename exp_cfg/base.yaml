@@ -28,6 +28,12 @@ c_scheduler: [ 0.3, 0.9, 1.0 ]
 negative_prompt: "blurry, low quality, foggy, overall gray, subtitles, incomplete, ghost image, too close to camera"
 strength: 0.5
 num_inference_steps: 50
+# refine backend 随机种子:
+# - 默认 `refine_seed=64`, 让 Flux/Kontext 在不显式覆盖时保持固定 seed
+# - 若要单独覆盖某条 backend, 可在实验 yaml 里写 `flux_seed` 或 `kontext_seed`
+refine_seed: 64
+flux_seed: null
+kontext_seed: null
 kontext_model_path: null # Kontext 可选 backend 的独立模型路径; 留空时优先尝试本地缓存, 再回退官方 repo id
 kontext_prompt: null # Kontext 可单独覆盖主 prompt; 留空时回退 `prompt`, 并自动追加“修瑕疵 + 保持当前视角/结构”的修复指令
 kontext_negative_prompt: null # Kontext 可单独覆盖 negative prompt; 适合压制“额外细节 / 乱纹理 / 过锐化”而不复用主链的泛化增强口径
@@ -38,6 +44,23 @@ guide_ratio: 1.0
 warp_ratio: 0.5
 refine_max: 5
 refine_steps: 300
+# strategy 的阈值比较默认沿用真实训练时间轴。
+# 若希望 mature checkpoint 的 refine 真正触发 prune / reset 窗口,
+# 可显式设置 `refine_virtual_step`, 例如 100。
+refine_virtual_step: null
+# 下面四个默认值对齐当前 refine 里原本硬编码的 DefaultStrategy 参数。
+# 如果你要做“cleanup-oriented refine”, 可以在实验 yaml 里按需覆盖。
+refine_start_iter: 100
+refine_stop_iter: 5000
+reset_every: 1500
+refine_every: 200
+# 下面四个默认值对齐底层场景 cfg / strategy 默认值。
+# 若想做“轻度净消减”实验, 优先在实验 yaml 覆盖 `prune_opa / grow_grad2d`,
+# 不要直接改 `<base_dir>/cfg.json`。
+prune_opa: null
+grow_grad2d: null
+grow_scale3d: null
+prune_scale3d: null
 gen_prob: 0.1
 gen_loss_weight: 0.2
 affine: True

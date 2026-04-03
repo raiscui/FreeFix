@@ -1,0 +1,96 @@
+# `my5` 的保守压重影版 pose jitter refine 配置。
+# 目标:
+# - 先压 ghosting / 双边线 / 发虚边
+# - 优先保结构与轮廓, 不追求“更敢补细节”
+# - 同时兼容 Flux / Kontext 两条 backend
+#
+
+
+base_dir: outputs/my5_colmap_fastgs_stable_35k_dense
+exp_name: my5_pose_jitter_v5
+
+# ------------------------------------------------------------------
+# before / after 固定视角对照窗口保持不变, 只改中间 synthetic supervise 的保守度。
+# ------------------------------------------------------------------
+refine_start_idx: 0
+refine_end_idx: 41
+
+train_start_idx: 0
+train_end_idx: 283
+
+test_split: test
+test_trans: [0, 0, 0]
+test_rots: [0, 0, 0]
+
+# ------------------------------------------------------------------
+# Prompt 改成“修复优先, 不造新细节”。
+# 当前问题不是“不够锐”, 而是“错位叠加 + 过修”。
+# ------------------------------------------------------------------
+prompt: "Clean repair pass. Remove ghosting, blur, and compression artifacts while preserving the current view, geometry, silhouettes, and object boundaries. Do not invent new detail."
+negative_prompt: "extra details, double edges, duplicate contours, halo, ghost image, oversharpening, crunchy detail, noisy texture, clutter, text"
+
+# Kontext 继续使用短 prompt, 但更明确要求“不加细节 / 不过锐化”。
+kontext_prompt: "Clean stable repair. Remove ghosting and blur. Keep current structure, silhouettes, and edges. Do not add detail or sharpen."
+kontext_negative_prompt: "extra details, duplicate edges, double contours, halos, ghosting, oversharpening, crunchy detail, noisy texture, clutter, dust, grain"
+
+# ------------------------------------------------------------------
+# 主调参思路:
+# - 降低 strength, 减少“修过头”
+# - warp_ratio 从几乎关闭的 0.01 回到一个小但非零的锚点
+# - 减少 synthetic 图权重与 refine 总步数
+# - hessian_attr 先退回仅 means, 优先压重影
+# ------------------------------------------------------------------
+strength: 0.50
+refine_steps: 250
+warp_ratio: 0.05
+gen_prob: 0.10
+refine_virtual_step: 100
+refine_start_iter: 100
+refine_stop_iter: 5000
+reset_every: 1500
+refine_every: 200
+
+hessian_attr: ["means", "quats", "scales"]
+
+data_type: colmap
+load_step: 35000
+load_ckpt_path: outputs/my5_colmap_fastgs_stable_35k_dense/ckpts/ckpt_flux_shinkai_museum_v2_fastgs_my5_nomask_v1_35000_fixsh_rerun.pt
+
+flux_model_path: /home/rais/.cache/modelscope/hub/models/black-forest-labs/FLUX.1-dev
+refine_pipeline_offload_mode: none
+
+refine_camera_mode: pose_jitter
+
+# ------------------------------------------------------------------
+# synthetic source pool 继续只吃 train, 避免 benchmark 语义漂移。
+# ------------------------------------------------------------------
+refine_train_splits: [train]
+refine_camera_source_splits: [train]
+pose_jitter_views_per_source: 1/3
+
+# ------------------------------------------------------------------
+# 保守版 jitter:
+# - 把平移 sigma / max 压回更稳的量级
+# - 把邻居窗口收窄到前后各 1 个, 避免远邻把半径 cap 放大
+# - 把 neighbor_radius_scale 压到 0.85
+# - 旋转同步收紧
+# ------------------------------------------------------------------
+pose_jitter_trans_sigma: [0.50, 0.50, 0.50]
+pose_jitter_trans_max: [1.50, 1.50, 1.50]
+pose_jitter_trans_radius_mode: neighbor_average_radius
+pose_jitter_neighbor_window: 2
+pose_jitter_neighbor_radius_scale: 1
+pose_jitter_rot_sigma_deg: [0.8, 0.8, 0.8]
+pose_jitter_rot_max_deg: [1.5, 1.5, 1.5]
+pose_jitter_max_attempts: 4
+pose_jitter_alpha_threshold: 0.05
+pose_jitter_min_alpha_coverage: 0.03
+
+# --refine-backend kontext
+# Kontext backend 不吃 warp_ratio, 所以这里也单独把它收保守:
+# - 降低 kontext_strength
+# - 略减 inference steps, 降低过处理概率
+kontext_model_path: /home/rais/.cache/modelscope/hub/models/black-forest-labs/FLUX.1-Kontext-dev
+kontext_strength: 0.40
+kontext_num_inference_steps: 45
+kontext_guidance_scale: 2.5
