@@ -4,6 +4,8 @@ from recon.refine_view_plan import (
     build_fractional_split_index_plan,
     build_split_index_plan,
     coerce_named_splits,
+    coerce_non_negative_int,
+    coerce_positive_int,
     coerce_views_per_source_fraction,
     format_views_per_source_fraction,
 )
@@ -73,6 +75,14 @@ def build_refine_view_plan(refiner, cfg) -> tuple[list[dict[str, Any]], dict[str
         getattr(cfg, "pose_jitter_views_per_source", 1)
     )
     density_label = format_views_per_source_fraction(density_numerator, density_denominator)
+    interleaved_source_count = coerce_positive_int(
+        getattr(cfg, "pose_jitter_source_interleaved_count", 1),
+        name="pose_jitter_source_interleaved_count",
+    )
+    source_skip_first_count = coerce_non_negative_int(
+        getattr(cfg, "pose_jitter_source_skip_first_count", 0),
+        name="pose_jitter_source_skip_first_count",
+    )
 
     if density_denominator == 1:
         repeats_per_source: int | str = density_numerator
@@ -80,6 +90,7 @@ def build_refine_view_plan(refiner, cfg) -> tuple[list[dict[str, Any]], dict[str
             split_lengths,
             splits=source_splits,
             repeats_per_item=density_numerator,
+            start_offset=source_skip_first_count,
         )
         mode = "all_views_from_named_splits"
     else:
@@ -89,6 +100,8 @@ def build_refine_view_plan(refiner, cfg) -> tuple[list[dict[str, Any]], dict[str
             splits=source_splits,
             keep_numerator=density_numerator,
             keep_denominator=density_denominator,
+            block_size=interleaved_source_count,
+            start_offset=source_skip_first_count,
         )
         mode = "fractional_views_from_named_splits"
 
@@ -97,5 +110,7 @@ def build_refine_view_plan(refiner, cfg) -> tuple[list[dict[str, Any]], dict[str
         "splits": source_splits,
         "repeats_per_source": repeats_per_source,
         "source_density": density_label,
+        "source_skip_first_count": source_skip_first_count,
+        "source_interleaved_count": interleaved_source_count,
         "count": len(plan),
     }

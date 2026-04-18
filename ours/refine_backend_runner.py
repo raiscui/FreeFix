@@ -33,6 +33,32 @@ class BackendRuntime:
     generate_image: Callable[..., Any]
 
 
+def build_final_3dgs_ply_path(cfg) -> Path:
+    """统一约定 refine 最终 3DGS PLY 的落盘位置。"""
+    return (Path(cfg.base_dir) / f"point_cloud_{cfg.exp_name}.ply").resolve()
+
+
+def export_final_3dgs_ply(
+    *,
+    ckpt_path: str | Path,
+    output_path: str | Path,
+    log_runtime_stage: Callable[[str], None],
+) -> str:
+    """把 refine 最终 checkpoint 导出成标准 3DGS PLY。"""
+    from recon.export_3dgs_ply import build_ply_matrix, load_splats_from_checkpoint, write_binary_ply
+
+    ckpt_path = Path(ckpt_path).expanduser().resolve()
+    output_path = Path(output_path).expanduser().resolve()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    log_runtime_stage(f"开始导出最终 3DGS PLY: {output_path}")
+    splats = load_splats_from_checkpoint(ckpt_path)
+    matrix, property_names = build_ply_matrix(splats)
+    write_binary_ply(output_path, matrix, property_names)
+    log_runtime_stage(f"最终 3DGS PLY 已导出: {output_path}")
+    return str(output_path)
+
+
 def build_refiner_runtime_kwargs(cfg, *, load_ckpt_path: str | None) -> dict[str, Any]:
     """把 wrapper 配置整理成 `Refiner(...)` 的稳定参数集合。
 
@@ -99,6 +125,13 @@ def run_backend_refine(
             and isinstance(final_ckpt_path, str)
             and Path(final_ckpt_path).expanduser().exists()
         ):
+            final_ply_output_path = build_final_3dgs_ply_path(cfg)
+            if not final_ply_output_path.exists():
+                export_final_3dgs_ply(
+                    ckpt_path=final_ckpt_path,
+                    output_path=final_ply_output_path,
+                    log_runtime_stage=log_runtime_stage,
+                )
             log_runtime_stage("检测到本次 refine 已完整完成, 且最终 checkpoint 已存在, 跳过重复执行")
             return
 
@@ -163,7 +196,10 @@ def run_backend_refine(
     )
     log_runtime_stage(
         f"synthetic plan: mode={refine_plan_info['mode']} splits={list(refine_plan_info['splits'])} "
-        f"repeats_per_source={refine_plan_info['repeats_per_source']} count={refine_plan_info['count']}"
+        f"repeats_per_source={refine_plan_info['repeats_per_source']} "
+        f"source_skip_first_count={refine_plan_info.get('source_skip_first_count', 0)} "
+        f"source_interleaved_count={refine_plan_info.get('source_interleaved_count', 1)} "
+        f"count={refine_plan_info['count']}"
     )
     if "test" in train_pool_info["splits"] or "test" in refine_plan_info["splits"]:
         log_runtime_stage("警告: 当前 refine 已把 test split 纳入训练或 synthetic source pool, benchmark 将被污染")
@@ -398,4 +434,9 @@ def run_backend_refine(
         after_done=True,
         current_resume_ckpt_path=str(resume_ckpt_path.resolve()) if resume_ckpt_path.exists() else saved_ckpt_path,
         final_ckpt_path=saved_ckpt_path,
+    )
+    export_final_3dgs_ply(
+        ckpt_path=saved_ckpt_path,
+        output_path=build_final_3dgs_ply_path(cfg),
+        log_runtime_stage=log_runtime_stage,
     )

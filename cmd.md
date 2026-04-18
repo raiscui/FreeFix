@@ -19,6 +19,72 @@
     --set pose_opt=true \
     --set app_opt=true
 
+
+
+
+.pixi/envs/default/bin/python -m ours.refine_by_flux \
+  --exp_cfg exp_cfg/dm7/flux_dm7_sr_30k_pose_jitter_v6-5.yaml
+
+.pixi/envs/default/bin/python -m ours.refine_by_kontext \
+--exp_cfg exp_cfg/nt6/flux_nt6_sr_35k_guarded_pose_jitter_v2.yaml
+
+.pixi/envs/default/bin/python -m ours.refine_by_kontext --exp_cfg exp_cfg/nt7/flux_nt7_sr_35k_guarded_pose_jitter_v2_from_v1.yaml
+
+.pixi/envs/default/bin/python -m ours.refine_by_kontext --exp_cfg exp_cfg/nt6/flux_nt6_sr_35k_guarded_pose_jitter_v2_from_v2.yaml
+
+---------
+  ./.pixi/envs/default/bin/python -m ours.refine_by_kontext --exp_cfg exp_cfg/nt1/flux_nt1_sr_35k_guarded_pose_jitter_v2.yaml
+  ./.pixi/envs/default/bin/python -m ours.refine_by_kontext --exp_cfg exp_cfg/nt2/flux_nt2_sr_35k_guarded_pose_jitter_v2.yaml
+  ./.pixi/envs/default/bin/python -m ours.refine_by_kontext --exp_cfg exp_cfg/nt3/flux_nt3_sr_35k_guarded_pose_jitter_v2.yaml
+  ./.pixi/envs/default/bin/python -m ours.refine_by_kontext --exp_cfg exp_cfg/nt4/flux_nt4_sr_35k_guarded_pose_jitter_v2.yaml
+  ./.pixi/envs/default/bin/python -m ours.refine_by_kontext --exp_cfg exp_cfg/nt5/flux_nt5_sr_35k_guarded_pose_jitter_v2.yaml
+
+  第二轮
+
+  ./.pixi/envs/default/bin/python -m ours.refine_by_kontext --exp_cfg exp_cfg/nt1/flux_nt1_sr_35k_guarded_pose_jitter_v2_from_v2.yaml
+  ./.pixi/envs/default/bin/python -m ours.refine_by_kontext --exp_cfg exp_cfg/nt2/flux_nt2_sr_35k_guarded_pose_jitter_v2_from_v2.yaml
+  ./.pixi/envs/default/bin/python -m ours.refine_by_kontext --exp_cfg exp_cfg/nt3/flux_nt3_sr_35k_guarded_pose_jitter_v2_from_v2.yaml
+  ./.pixi/envs/default/bin/python -m ours.refine_by_kontext --exp_cfg exp_cfg/nt4/flux_nt4_sr_35k_guarded_pose_jitter_v2_from_v2.yaml
+  ./.pixi/envs/default/bin/python -m ours.refine_by_kontext --exp_cfg exp_cfg/nt5/flux_nt5_sr_35k_guarded_pose_jitter_v2_from_v2.yaml
+
+
+
+  cd /root/autodl-tmp/home/rais/FreeFix
+  mkdir -p data/fastgs_bridge/nt7_sr_35000_guarded
+  ./.pixi/envs/default/bin/python -m recon.import_fastgs \
+    --ply-path /autodl-fs/data/fastgs/output/nt7_sr_35000_guarded/point_cloud/iteration_35000/point_cloud.ply \
+    --data-dir /autodl-fs/data/fastgs/nt7_sr \
+    --output data/fastgs_bridge/nt7_sr_35000_guarded/ckpt_35000_freefix.pt
+
+    -------------
+
+
+
+  CUDA_VISIBLE_DEVICES=0   TORCH_EXTENSIONS_DIR=/root/autodl-tmp/home/rais/.cache/torch_extensions \
+  TORCH_CUDA_ARCH_LIST=12.0 \
+  MAX_JOBS=1 \
+  OMP_NUM_THREADS=8 \
+  IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg \
+  PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+  .pixi/envs/default/bin/python3 -u -m ours.refine_by_kontext \
+    --exp_cfg outputs/dm4_colmap_fastgs_stable_30k_dense/flux_dm4_sr_from_dm7_30k_pose_jitter_v6-5.yaml \
+    --base_cfg exp_cfg/base.yaml \
+    --colmap-path /autodl-fs/data/fastgs/dm4_sr \
+    --ckpt-path data/fastgs_bridge/dm4_sr_35000_guarded/ckpt_35000_freefix.pt
+
+  CUDA_VISIBLE_DEVICES=1   TORCH_EXTENSIONS_DIR=/root/autodl-tmp/home/rais/.cache/torch_extensions \
+  TORCH_CUDA_ARCH_LIST=12.0 \
+  MAX_JOBS=1 \
+  OMP_NUM_THREADS=8 \
+  IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg \
+  PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+  .pixi/envs/default/bin/python3 -u -m ours.refine_by_kontext \
+    --exp_cfg outputs/dm5_colmap_fastgs_stable_30k_dense/flux_dm5_sr_from_dm7_30k_pose_jitter_v6-5.yaml \
+    --base_cfg exp_cfg/base.yaml \
+    --colmap-path /autodl-fs/data/fastgs/dm5_sr \
+    --ckpt-path data/fastgs_bridge/dm5_sr_35000_guarded/ckpt_35000_freefix.pt
+
+
 ## 0. 让当前 shell 拿到项目自己的 CUDA 工具链
 
 ```bash

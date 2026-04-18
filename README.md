@@ -199,6 +199,9 @@ Notes:
 - `pose_jitter_views_per_source` supports either:
   - a positive integer, meaning "repeat each source camera N times"
   - a positive fraction string like `1/2` or `1/4`, meaning "keep a stable subset of the source pool at that density"
+- If your COLMAP cameras are interleaved by source rig, set `pose_jitter_source_interleaved_count`.
+  - Example: with 12-way interleaving and `pose_jitter_views_per_source: 1/2`, set `pose_jitter_source_interleaved_count: 12`.
+  - Then FreeFix keeps the first 12 views, skips the next 12, keeps the next 12, instead of sampling `0, 2, 4, ...`.
 - If you want pose jitter to draw from multiple named splits, use:
   - `refine_camera_source_splits: [train, test]`
   - `refine_train_splits: [train, test]`

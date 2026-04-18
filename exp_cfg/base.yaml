@@ -11,7 +11,9 @@ refine_camera_mode: fixed # fixed 保持现有视角; pose_jitter 只在中间 s
 refine_camera_source_split: train # 旧模式下 pose_jitter 围绕哪组真实相机采样。默认不要直接复用 benchmark eval split
 refine_train_splits: null # 新模式: null 保持旧的 train_start_idx/train_end_idx; 可设为 [train, test] 或 all, 表示把这些 split 的全部真实镜头纳入真实监督池, 会污染 benchmark
 refine_camera_source_splits: null # 新模式: null 保持旧的 refine_start_idx/refine_end_idx + refine_camera_source_split; 可设为 [train, test] 或 all, 表示把这些 split 的全部镜头都作为 synthetic source pool
-pose_jitter_views_per_source: 1 # 支持正整数或 `a/b` 分数。整数表示每个基镜头重复多少次; 例如 3 -> train+test 共 324 镜头时会得到 972 条 synthetic plan。分数表示按固定比例稳定抽样 source pool; 例如 `1/2` 表示每 2 个 source 保留 1 个
+pose_jitter_source_skip_first_count: 0 # 新模式下先从每个 source split 里剔除前多少张图。比如设为 5 时, source pool 会从第 6 张开始; 后续 `pose_jitter_views_per_source` / `pose_jitter_source_interleaved_count` 都基于这个裁剪后的集合生效
+pose_jitter_views_per_source: 1 # 支持正整数或 `a/b` 分数。整数表示每个基镜头重复多少次; 例如 3 -> train+test 共 324 镜头时会得到 972 条 synthetic plan。分数表示按固定比例稳定抽样裁剪后的 source pool; 例如 `1/2` 表示每 2 个 source block 保留 1 个
+pose_jitter_source_interleaved_count: 1 # 分数抽样时每个“source block”包含多少张连续镜头。默认 1 表示逐张抽样; 若 COLMAP 是 12 路交错, 可设为 12, 让 `1/2` 变成“保留 12 张、跳过 12 张”。这个 block 是在 `pose_jitter_source_skip_first_count` 裁剪之后再开始分组
 pose_jitter_trans_sigma: [ 0.02, 0.02, 0.02 ] # meters, 相机局部 xyz 平移高斯采样标准差
 pose_jitter_trans_max: [ 0.05, 0.05, 0.05 ] # meters, 平移硬上限, 超过后会被裁剪
 pose_jitter_trans_radius_mode: disabled # disabled 保持旧行为; neighbor_average_radius 表示用相邻镜头平均距离作为平移半径 cap

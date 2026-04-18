@@ -1,5 +1,6 @@
 {
-  "last_turn_at": "2026-04-03T16:29:38.559Z",
-  "turn_count": 43,
-  "last_agent_output": "这是 `v6-3 / v6-4 / v6-5` 的最终对比表。\n\n| run | test PSNR | test SSIM | test LPIPS | train PSNR | train SSI"
+  "last_turn_at": "2026-04-10T15:12:29.508Z",
+  "last_progress_at": "2026-04-10T15:12:29.508Z",
+  "turn_count": 12,
+  "last_agent_output": "已输出。\n\n- Unity版相机轨迹：\n  - `outputs/dm7_colmap_fastgs_stable_30k_dense/dm7_sr_pose_jitter_v6-5/after_re"
 }

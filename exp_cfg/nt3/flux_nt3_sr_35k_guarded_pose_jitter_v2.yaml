@@ -1,0 +1,68 @@
+# 基于 `nt3_sr_35000_guarded/point_cloud/iteration_35000/point_cloud.ply`
+# 转出的 bridge checkpoint 的专用 Flux refine 配置。
+# 参数口径对齐 `exp_cfg/nt7/flux_nt7_sr_35k_guarded_pose_jitter_v2.yaml`。
+
+base_dir: outputs/nt3_colmap_fastgs_stable_35k_dense
+exp_name: nt3_sr_guarded_pose_jitter_v2
+
+refine_start_idx: 0
+refine_end_idx: 41
+
+train_start_idx: 0
+train_end_idx: 283
+
+test_split: test
+test_trans: [0, 0, 0]
+test_rots: [0, 0, 0]
+
+prompt: "Clean repair pass. Remove ghosting, blur, and compression artifacts while preserving the current view, geometry, silhouettes, and object boundaries. Do not invent new detail."
+negative_prompt: "extra details, double edges, duplicate contours, halo, ghost image, oversharpening, crunchy detail, noisy texture, clutter, text"
+
+kontext_prompt: "Clean stable repair. Remove ghosting and blur. Keep current structure like reference image, silhouettes, and edges. Do not add detail or sharpen."
+kontext_negative_prompt: "extra details, duplicate edges, double contours, halos, ghosting, oversharpening, crunchy detail, noisy texture, clutter, dust, grain"
+
+strength: 0.45
+refine_steps: 1000
+warp_ratio: 0.25
+gen_prob: 0.10
+
+refine_virtual_step: 100
+refine_start_iter: 200
+refine_stop_iter: 5000
+reset_every: 999999
+refine_every: 200
+
+prune_opa: 0.004
+grow_grad2d: 0.0003
+
+hessian_attr: ["means", "quats", "scales"]
+
+data_type: colmap
+load_step: 35000
+load_ckpt_path: data/fastgs_bridge/nt3_sr_35000_guarded/ckpt_35000_freefix.pt
+
+flux_model_path: /home/rais/.cache/modelscope/hub/models/black-forest-labs/FLUX.1-dev
+refine_pipeline_offload_mode: none
+
+refine_camera_mode: pose_jitter
+refine_train_splits: [train]
+refine_camera_source_splits: [train]
+pose_jitter_source_skip_first_count: 96
+pose_jitter_views_per_source: 1/3
+pose_jitter_source_interleaved_count: 12
+
+pose_jitter_trans_sigma: [0.70, 0.70, 0.70]
+pose_jitter_trans_max: [1.70, 1.70, 1.70]
+pose_jitter_trans_radius_mode: neighbor_average_radius
+pose_jitter_neighbor_window: 2
+pose_jitter_neighbor_radius_scale: 1.5
+pose_jitter_rot_sigma_deg: [0.8, 0.8, 0.8]
+pose_jitter_rot_max_deg: [1.5, 1.5, 1.5]
+pose_jitter_max_attempts: 4
+pose_jitter_alpha_threshold: 0.05
+pose_jitter_min_alpha_coverage: 0.03
+
+kontext_model_path: /home/rais/.cache/modelscope/hub/models/black-forest-labs/FLUX.1-Kontext-dev
+kontext_strength: 0.40
+kontext_num_inference_steps: 45
+kontext_guidance_scale: 2.5

@@ -94,6 +94,56 @@ def coerce_views_per_source_fraction(
     return numerator, denominator
 
 
+def coerce_positive_int(
+    raw_value: Any,
+    *,
+    name: str,
+) -> int:
+    """把配置里的正整数参数统一解析出来。"""
+    if isinstance(raw_value, bool):
+        raise ValueError(f"{name} 不能使用布尔值: {raw_value}")
+
+    if isinstance(raw_value, int):
+        value = raw_value
+    elif isinstance(raw_value, str):
+        text = raw_value.strip()
+        if not text:
+            raise ValueError(f"{name} 不能为空字符串")
+        value = int(text)
+    else:
+        raise ValueError(f"{name} 只支持正整数或整数字符串, 当前得到: {raw_value!r}")
+
+    if value < 1:
+        raise ValueError(f"{name} 必须 >= 1, 当前得到: {raw_value}")
+
+    return value
+
+
+def coerce_non_negative_int(
+    raw_value: Any,
+    *,
+    name: str,
+) -> int:
+    """把配置里的非负整数参数统一解析出来。"""
+    if isinstance(raw_value, bool):
+        raise ValueError(f"{name} 不能使用布尔值: {raw_value}")
+
+    if isinstance(raw_value, int):
+        value = raw_value
+    elif isinstance(raw_value, str):
+        text = raw_value.strip()
+        if not text:
+            raise ValueError(f"{name} 不能为空字符串")
+        value = int(text)
+    else:
+        raise ValueError(f"{name} 只支持非负整数或整数字符串, 当前得到: {raw_value!r}")
+
+    if value < 0:
+        raise ValueError(f"{name} 必须 >= 0, 当前得到: {raw_value}")
+
+    return value
+
+
 def format_views_per_source_fraction(numerator: int, denominator: int) -> str:
     """把 `(numerator, denominator)` 格式化成稳定字符串。"""
     if denominator == 1:
@@ -123,6 +173,7 @@ def build_split_index_plan(
     *,
     splits: Sequence[str],
     repeats_per_item: int = 1,
+    start_offset: int = 0,
 ) -> list[dict[str, Any]]:
     """按照 split 长度构造稳定的渲染 / refine 计划。
 
@@ -135,6 +186,9 @@ def build_split_index_plan(
     repeat_count = int(repeats_per_item)
     if repeat_count < 1:
         raise ValueError(f"repeats_per_item 必须 >= 1, 当前得到: {repeats_per_item}")
+    source_start_offset = int(start_offset)
+    if source_start_offset < 0:
+        raise ValueError(f"start_offset 必须 >= 0, 当前得到: {start_offset}")
 
     plan: list[dict[str, Any]] = []
     plan_index = 0
@@ -145,7 +199,7 @@ def build_split_index_plan(
         if split_length < 0:
             raise ValueError(f"split={split} 的长度不能为负数, 当前得到: {split_length}")
 
-        for source_index in range(split_length):
+        for source_index in range(source_start_offset, split_length):
             for repeat_index in range(repeat_count):
                 plan.append(
                     _build_plan_entry(
@@ -166,12 +220,16 @@ def build_fractional_split_index_plan(
     splits: Sequence[str],
     keep_numerator: int,
     keep_denominator: int,
+    block_size: int = 1,
+    start_offset: int = 0,
 ) -> list[dict[str, Any]]:
     """按固定比例稳定抽样 source pool, 构造 synthetic plan。
 
-    语义是“每 `keep_denominator` 个 source, 保留前 `keep_numerator` 个”。
+    语义是“每 `keep_denominator` 个 block, 保留前 `keep_numerator` 个 block”。
+    每个 block 默认只含 1 个 source；当 `block_size > 1` 时, 会按连续 block 稳定保留。
     例如:
     - `1/2` -> 保留索引 `0, 2, 4, ...`
+    - `1/2` 且 `block_size=12` -> 保留 `0-11, 24-35, ...`
     - `2/3` -> 保留索引 `0, 1, 3, 4, 6, 7, ...`
 
     这样能保持:
@@ -191,6 +249,18 @@ def build_fractional_split_index_plan(
             "fractional split plan 当前只支持 `0 < 分数 <= 1`, "
             f"当前得到: {keep_numerator}/{keep_denominator}"
         )
+    keep_block_size = int(block_size)
+    if keep_block_size < 1:
+        raise ValueError(
+            "fractional split plan 的 block_size 必须 >= 1, "
+            f"当前得到: {block_size}"
+        )
+    source_start_offset = int(start_offset)
+    if source_start_offset < 0:
+        raise ValueError(
+            "fractional split plan 的 start_offset 必须 >= 0, "
+            f"当前得到: {start_offset}"
+        )
 
     plan: list[dict[str, Any]] = []
     plan_index = 0
@@ -201,17 +271,23 @@ def build_fractional_split_index_plan(
         if split_length < 0:
             raise ValueError(f"split={split} 的长度不能为负数, 当前得到: {split_length}")
 
-        for source_index in range(split_length):
-            if source_index % denominator >= numerator:
+        remaining_length = max(split_length - source_start_offset, 0)
+        for local_block_start in range(0, remaining_length, keep_block_size):
+            block_index = local_block_start // keep_block_size
+            if block_index % denominator >= numerator:
                 continue
-            plan.append(
-                _build_plan_entry(
-                    plan_index=plan_index,
-                    source_split=split,
-                    source_index=source_index,
-                    source_repeat_index=0,
+
+            block_start = source_start_offset + local_block_start
+            block_end = min(block_start + keep_block_size, split_length)
+            for source_index in range(block_start, block_end):
+                plan.append(
+                    _build_plan_entry(
+                        plan_index=plan_index,
+                        source_split=split,
+                        source_index=source_index,
+                        source_repeat_index=0,
+                    )
                 )
-            )
-            plan_index += 1
+                plan_index += 1
 
     return plan

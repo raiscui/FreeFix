@@ -1,9 +1,10 @@
 {
-  "session_id": "omx-1775181552843-8sutlp",
-  "started_at": "2026-04-03T01:59:12.970Z",
+  "session_id": "019d9b7d-90d2-7111-ab6f-1bc45eea13c7",
+  "native_session_id": "019d9b7d-90d2-7111-ab6f-1bc45eea13c7",
+  "started_at": "2026-04-17T12:52:00.743Z",
   "cwd": "/root/autodl-tmp/home/rais/FreeFix",
-  "pid": 2100,
+  "pid": 331231,
   "platform": "linux",
-  "pid_start_ticks": 178631687,
-  "pid_cmdline": "node /home/rais/.local/state/fnm_multishells/1755_1775181486609/bin/omx --xhigh --madmax"
+  "pid_start_ticks": 1054104369,
+  "pid_cmdline": "/root/autodl-tmp/home/rais/.local/share/fnm/node-versions/v24.14.1/installation/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/codex/codex -p ju"
 }
